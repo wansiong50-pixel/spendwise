@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Cache subfolder for CSV / future export artifacts. We use cache (not
+         files) so Android may reclaim space; the user only needs the URI long
+         enough to share the file with another app. -->
+    <cache-path name="exports" path="exports/" />
+</paths>

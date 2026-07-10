@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.ExpenseTracker" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowBackground">#F4F1FA</item>
+        <item name="android:navigationBarColor">#F4F1FA</item>
+        <item name="android:statusBarColor">#F4F1FA</item>
+    </style>
+
+    <!-- Cold-start splash. MainActivity holds this on screen (via
+         setKeepOnScreenCondition) just until the saved appearance preference
+         loads, then swaps to Theme.ExpenseTracker — so the first drawn app
+         frame is already in the user's saved theme without blocking the main
+         thread on the DataStore read. -->
+    <style name="Theme.ExpenseTracker.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#F4F1FA</item>
+        <item name="postSplashScreenTheme">@style/Theme.ExpenseTracker</item>
+    </style>
+</resources>

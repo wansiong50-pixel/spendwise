@@ -1,0 +1,39 @@
+Good question. Let me check the year picker behaviour first.
+
+Let me quickly verify a few claims before answering — month picker year span, date display handling, and category/account churn.
+
+Now I have enough to give a grounded answer.
+
+## Year picker — yes, it works with multi-year data
+
+[`SpendWiseV2.kt:516–522`](app/src/main/java/com/ameer/expensetracker/ui/SpendWiseV2.kt:516) builds the picker's year list from `state.expenses` — every distinct year that has at least one expense, plus the current year, sorted descending. So after 2 years you'll see two rows; after 3 years, three; and so on.
+
+One minor UX inconsistency: the "Change" pill in Insights ([`SpendWiseV2Screens.kt:2140`](app/src/main/java/com/ameer/expensetracker/ui/SpendWiseV2Screens.kt:2140)) is *always* shown, even when there's only one year. The code comment says it should be gated by `years.size > 1` but the gate isn't there. Easy fix if you want.
+
+## Long-term issues, ranked by how badly they bite
+
+**1. No backup / export — single point of failure.** Nothing writes outside the on-device Room DB. Phone reset, factory reset, app uninstall, corruption → 2 years of data gone. No Drive sync, no CSV export, no JSON dump. **Highest-priority gap by far.**
+
+**2. Time zone is hardcoded `Asia/Kuala_Lumpur`.** Every date display interprets epoch-millis through this single zone ([`SpendWiseV2.kt:204`](app/src/main/java/com/ameer/expensetracker/ui/SpendWiseV2.kt:204), [`SpendWiseV2Screens.kt`](app/src/main/java/com/ameer/expensetracker/ui/SpendWiseV2Screens.kt) `ZONE_KL`, etc.). If you travel for a month or move, "Today" stops matching your phone's actual today, and month boundaries can shift entries into the wrong YearMonth bucket.
+
+**3. Currency is hardcoded "RM" everywhere.** Same pattern as the timezone — every `Amount` and label is "RM ...". `MonthlySpendingSummary.currencyCode` field exists but the UI ignores it.
+
+**4. Date display drops the year.** [`formatFriendlyDate`](app/src/main/java/com/ameer/expensetracker/ui/SpendWiseV2Modals.kt:873) returns `"EEE, d MMM"` for non-today entries — no year. When you scroll back to a 2024 transaction in the Activity list it reads as "Sat, 17 May", not "Sat, 17 May 2024". Same for the tx detail sheet header. Not destructive but confusing once data spans years.
+
+**5. Animation cap on `V2Amount`.** [`SpendWiseV2.kt:1089`](app/src/main/java/com/ameer/expensetracker/ui/SpendWiseV2.kt:1089) disables the rolling-counter animation when `abs(cents) >= 16_000_000` — i.e. RM 160,000. After a couple of years of accumulated income or a high-balance account, the hero balance just *snaps* instead of rolling. Not a bug per se (it's a deliberate cap), but worth raising when you cross it.
+
+**6. Performance — everything is in-memory list scans.** `state.expenses` is the full table held as a single `StateFlow<List<Expense>>`. Activity-screen filtering, "history at merchant" lookup in the new detail sheet, top-categories rebuild on every chip switch — all O(n) over the full list. At 2 years of ~30 entries/month (~720 rows) it's invisible. At 5 years × 100/month (6000 rows) the chip switches will start to feel laggy because every filter re-runs on the main thread inside a `remember`. The fix is to move aggregations behind ViewModel-cached Flows keyed by selectedMonth.
+
+**7. Category / account churn over time.**
+- Categories: deletion is handled via `deleteCategoryWithStrategy` (good — historical expenses get reassigned), but **renames are immediate** — your historical "Groceries" becomes "Markets" everywhere, including in old months. Whether that's desired or a "rewrite history" bug is a design call.
+- Accounts: archiving is supported. If you delete an account that has historical expenses though, the activity row falls back to `"Account"` ([`SpendWiseV2Screens.kt:1123`](app/src/main/java/com/ameer/expensetracker/ui/SpendWiseV2Screens.kt:1123)) — readable but ugly.
+
+**8. Month picker uses `monthsWithData`.** ([`SpendWiseV2.kt:560`](app/src/main/java/com/ameer/expensetracker/ui/SpendWiseV2.kt:560)) — it correctly spans years, so navigating Apr 2025 → May 2026 works. Good.
+
+**9. The new "Recurring" detection in tx detail sheet is fragile.** My code only flags monthly when avg gap is 20–40 days. Two salary entries 31 days apart works. But a one-off freelance income just got its category flagged the same way a regular salary would — the heuristic doesn't know the difference. Manageable for now since the row only appears when ≥2 entries with consistent cadence exist in the same income *category*.
+
+**10. Net YTD on Insights only shows the selected year.** [`SpendWiseV2Screens.kt:2148`](app/src/main/java/com/ameer/expensetracker/ui/SpendWiseV2Screens.kt:2148) — so "lifetime net" isn't visible anywhere. Probably fine but worth noting once data spans multiple years.
+
+---
+
+Most urgent to fix: **#1 (backup/export)** and **#4 (year-aware date format)**. Want me to tackle either now, or save for a separate session?

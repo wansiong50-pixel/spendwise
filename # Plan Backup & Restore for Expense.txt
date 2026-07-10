@@ -1,0 +1,73 @@
+# Plan: Backup & Restore for Expense Tracker
+
+## Context
+
+Users currently have no way to preserve their expense data across a reinstall. The user explicitly wants to "load their past backup if they delete the app and then install again." This is also a useful safety net for the kind of crash bug we just fixed — if something corrupts the DB, the user has a recent backup to fall back to.
+
+A CSV exporter already exists at [app/src/main/java/com/ameer/expensetracker/export/ExpenseExporter.kt](app/src/main/java/com/ameer/expensetracker/export/ExpenseExporter.kt) — but it's year-scoped and one-way (CSV can't faithfully restore IDs / FK relationships). This plan adds a separate **full-database JSON backup** that can be exported to and restored from any user-chosen location (Google Drive, Files app, etc.).
+
+Outcome: two new rows in the Settings sheet — **"Back up data"** (writes a `.json` file the user picks where to save) and **"Restore from backup"** (reads a backup file and replaces all current data, with confirmation).
+
+## Approach
+
+**Format**: A single JSON file containing all 4 tables + a schema version header, so future schema changes can be handled gracefully without rejecting older backups outright.
+
+```jsonc
+{
+  "schemaVersion": 1,            // backup format version (not Room DB version)
+  "appDbVersion": 6,             // Room DB version at export time
+  "exportedAtMillis": 1234567890,
+  "darkModeEnabled": true,       // from AppearancePreferenceStore
+  "categories": [...],
+  "accounts":   [...],
+  "budgets":    [...],
+  "expenses":   [...]
+}
+```
+
+**Storage Access Framework** (no permissions needed on SDK 36):
+- Export → `ActivityResultContracts.CreateDocument("application/json")` with suggested filename `spendwise-backup-YYYYMMDD-HHmm.json`. Write via `contentResolver.openOutputStream(uri)`.
+- Restore → `ActivityResultContracts.OpenDocument()` filtered to JSON. Read via `contentResolver.openInputStream(uri)`.
+
+**Restore strategy: replace-all**, wrapped in `database.withTransaction { ... }` so a mid-restore failure rolls back cleanly. Order: delete all → insert categories → accounts → budgets → expenses (matches the FK chain identified during exploration). Primary keys from the backup are preserved exactly, so historical IDs don't drift.
+
+**JSON library**: add **kotlinx.serialization** (small Kotlin-native dep, ~few KB, type-safe via `@Serializable` data classes). Gson/Moshi would also work; kotlinx is the lightest fit since this project already uses Kotlin everywhere.
+
+**Validation on restore**:
+- Reject if `schemaVersion` is newer than what this app version knows (show: "This backup was made with a newer version of the app — please update first").
+- Catch parse errors → show "This file isn't a valid SpendWise backup."
+- Wrap entire import in `try`/`catch` + transaction — any failure leaves the existing DB untouched.
+
+## Files to create / modify
+
+**Create:**
+- `app/src/main/java/com/ameer/expensetracker/export/BackupSchema.kt` — `@Serializable` data classes for the JSON payload (one per entity + the envelope). Use field-by-field copies of the existing entities; don't reuse the Room entity classes directly (couples backup format to DB schema, breaking forward compatibility).
+- `app/src/main/java/com/ameer/expensetracker/export/BackupManager.kt` — `exportBackup(uri: Uri): Result<Unit>` and `importBackup(uri: Uri): Result<Unit>`. Both run on `Dispatchers.IO`. The import method wraps everything in `database.withTransaction`.
+
+**Modify:**
+- `app/build.gradle.kts` — add the kotlinx.serialization plugin (`id("org.jetbrains.kotlin.plugin.serialization")`) and dependency (`org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3`).
+- `app/src/main/java/com/ameer/expensetracker/AppContainer.kt` — instantiate `BackupManager` alongside the existing repository/store.
+- `app/src/main/java/com/ameer/expensetracker/ui/ExpenseTrackerViewModel.kt` — add `exportBackup(uri)` / `importBackup(uri)` wrappers + a `MutableStateFlow<BackupResult?>` for surfacing success/error to the UI.
+- `app/src/main/java/com/ameer/expensetracker/ui/SpendWiseV2Modals.kt` — extend `V2SettingsSheet` (around line 3801, after "Manage Categories") with two new rows mirroring the existing row pattern. Add a confirmation modal for restore (reuse the existing modal sheet pattern from this same file).
+- `app/src/main/java/com/ameer/expensetracker/ui/SpendWiseV2Screens.kt` — wire `rememberLauncherForActivityResult(CreateDocument)` and `rememberLauncherForActivityResult(OpenDocument)` at the Settings screen level; pass callbacks down to the sheet. Show a snackbar on success/failure.
+
+**Untouched:**
+- AndroidManifest — no permissions or FileProvider changes (SAF handles it). FileProvider is still used by the existing CSV exporter.
+- Existing `ExpenseExporter.kt` — leave the CSV exporter alone; it serves a different use case (sharing one year's spending).
+
+## Verification
+
+1. **Build**: `./gradlew assembleDebug` — confirms kotlinx.serialization plugin + dep resolve.
+2. **Backup happy path**: Log a couple of expenses → Settings → Back up → save to Downloads → open the file in a text editor → confirm valid JSON with all 4 arrays populated and `schemaVersion: 1`.
+3. **Restore happy path**: Uninstall + reinstall the app → Settings → Restore → pick the backup file → confirm the modal → verify Categories, Accounts, Budgets, Expenses, and dark mode preference all reappear with same IDs.
+4. **Restore atomicity**: Manually corrupt the JSON mid-file → try restore → verify existing DB is untouched and a clear error appears.
+5. **Schema version guard**: Manually edit a backup to `"schemaVersion": 99` → try restore → verify the "newer version" error blocks the import.
+6. **FK integrity after restore**: After restore, edit an expense → confirm the account & category pickers show the restored values (proves FK relationships survived).
+7. **Logcat sanity check**: `adb logcat *:E` during all flows — no `FATAL EXCEPTION`.
+
+## Out of scope (could come later)
+
+- Auto-backup on a schedule (would need WorkManager + a default storage location)
+- Encrypted backups (add a passphrase + AES — defer until requested)
+- Cloud sync (Google Drive API integration is a much larger feature)
+- Merge-restore (keep existing data + add backup data) — replace-all matches the stated "reinstalled the app" use case

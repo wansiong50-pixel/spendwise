@@ -1,0 +1,25 @@
+.gradle/
+.idea/
+.superpowers/
+build/
+local.properties
+*.iml
+app/build/
+.kotlin/
+
+# Design artifacts and verification junk
+/preview/
+/design-package/
+/scratch/
+/screenshots/
+/*.png
+/SpendWise Redesign*.html
+
+# Generated user-guide outputs (docs/*.py generators are the source)
+docs/user-guide/*.docx
+docs/user-guide/*.pdf
+docs/user-guide/assets/
+docs/user-guide/rendered/
+docs/user-guide/pdf-pages/
+
+.claude/settings.local.json

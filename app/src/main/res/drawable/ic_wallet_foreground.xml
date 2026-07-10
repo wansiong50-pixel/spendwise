@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+    <!-- Adaptive-icon foreground. Viewport mirrors the source SVG's 512×512
+         coordinate space so paths are byte-for-byte identical. The graphic is
+         centered around (256, 256); all primary content sits inside Android's
+         72dp safe zone (≈ 312px in this viewport). -->
+
+    <!-- Mint accent slip behind the card -->
+    <path
+        android:fillColor="#166534"
+        android:fillAlpha="0.7"
+        android:pathData="M210,200 L310,130 L360,160 L230,230 Z" />
+    <path
+        android:pathData="M150,215 L300,140 L345,180 L190,255 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="150"
+                android:startY="255"
+                android:endX="345"
+                android:endY="140">
+                <item android:offset="0.0" android:color="#4ADE80" />
+                <item android:offset="1.0" android:color="#22C55E" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Mint card shim (sits 6 below the white card for a soft layered look) -->
+    <path
+        android:fillColor="#DCFCE7"
+        android:pathData="M176,176 H336 A40,40 0,0 1 376,216 V356 A40,40 0,0 1 336,396 H176 A40,40 0,0 1 136,356 V216 A40,40 0,0 1 176,176 Z" />
+
+    <!-- Primary white card -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M176,170 H336 A40,40 0,0 1 376,210 V350 A40,40 0,0 1 336,390 H176 A40,40 0,0 1 136,350 V210 A40,40 0,0 1 176,170 Z" />
+
+    <!-- Header band — translucent wash + primary stripe (matches SVG layering) -->
+    <path
+        android:fillColor="#22C55E"
+        android:fillAlpha="0.12"
+        android:pathData="M136,210 C136,187.9 153.9,170 176,170 H336 C358.1,170 376,187.9 376,210 V220 H136 Z" />
+    <path
+        android:fillColor="#15803D"
+        android:pathData="M136,215 C136,192.9 153.9,175 176,175 H336 C358.1,175 376,192.9 376,215 V220 H136 Z" />
+
+    <!-- Small inset box: white fill, green outline, with a green dot -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:strokeColor="#16A34A"
+        android:strokeWidth="4"
+        android:pathData="M330,270 H362 A24,24 0,0 1 386,294 V316 A24,24 0,0 1 362,340 H330 A24,24 0,0 1 306,316 V294 A24,24 0,0 1 330,270 Z" />
+    <path
+        android:fillColor="#16A34A"
+        android:pathData="M346,305 m-14,0 a14,14 0,1 0,28 0 a14,14 0,1 0,-28 0" />
+
+    <!-- Chart line — dark base stroke (gives the bright stroke a halo edge) -->
+    <path
+        android:strokeColor="#14532D"
+        android:strokeWidth="28"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M100,360 L185,275 L245,315 L365,175" />
+    <path
+        android:fillColor="#14532D"
+        android:strokeColor="#14532D"
+        android:strokeWidth="12"
+        android:strokeLineJoin="round"
+        android:pathData="M335,180 L385,150 L360,210 Z" />
+
+    <!-- Chart line — bright green accent on top -->
+    <path
+        android:strokeColor="#16A34A"
+        android:strokeWidth="16"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M100,360 L185,275 L245,315 L365,175" />
+    <path
+        android:fillColor="#16A34A"
+        android:strokeColor="#16A34A"
+        android:strokeWidth="4"
+        android:strokeLineJoin="round"
+        android:pathData="M335,180 L385,150 L360,210 Z" />
+
+    <!-- Pivot dots at the chart's two inflection points -->
+    <path
+        android:fillColor="#14532D"
+        android:pathData="M185,275 m-18,0 a18,18 0,1 0,36 0 a18,18 0,1 0,-36 0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M185,275 m-9,0 a9,9 0,1 0,18 0 a9,9 0,1 0,-18 0" />
+    <path
+        android:fillColor="#14532D"
+        android:pathData="M245,315 m-18,0 a18,18 0,1 0,36 0 a18,18 0,1 0,-36 0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M245,315 m-9,0 a9,9 0,1 0,18 0 a9,9 0,1 0,-18 0" />
+</vector>
