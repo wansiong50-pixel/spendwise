@@ -23,3 +23,8 @@ docs/user-guide/rendered/
 docs/user-guide/pdf-pages/
 
 .claude/settings.local.json
+
+# Release signing — never commit keys or their passwords
+keystore.properties
+*.jks
+*.keystore

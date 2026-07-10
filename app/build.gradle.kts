@@ -1,9 +1,19 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
     id("com.google.devtools.ksp")
+}
+
+// Release signing credentials live in an untracked keystore.properties (see
+// README "Release builds"). Absent file → release builds come out unsigned,
+// so clones without the key still compile.
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
 }
 
 android {
@@ -14,8 +24,8 @@ android {
         applicationId = "com.spendwise.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.2"
+        versionCode = 8
+        versionName = "1.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -23,8 +33,20 @@ android {
         }
     }
 
+    signingConfigs {
+        if (keystoreProperties.isNotEmpty()) {
+            create("release") {
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("release")
             // R8 + resource shrinking: Compose leans on R8 to inline and strip
             // its runtime layers — an unminified build is measurably slower,
             // worst on low-end CPUs.
