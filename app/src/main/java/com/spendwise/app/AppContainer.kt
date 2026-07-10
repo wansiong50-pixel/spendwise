@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import com.spendwise.app.analytics.SpendingAnalyzer
 import com.spendwise.app.data.AppearancePreferenceStore
+import com.spendwise.app.data.BackupPreferenceStore
 import com.spendwise.app.data.DefaultExpenseRepository
 import com.spendwise.app.data.ExpenseDatabase
 import com.spendwise.app.export.BackupManager
@@ -24,6 +25,7 @@ class AppContainer(context: Context) {
     ).build()
 
     val appearancePreferenceStore = AppearancePreferenceStore(appContext)
+    val backupPreferenceStore = BackupPreferenceStore(appContext)
     val expenseRepository = DefaultExpenseRepository(
         database = database,
         expenseDao = database.expenseDao(),

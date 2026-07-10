@@ -5,6 +5,8 @@
 
 package com.spendwise.app.ui
 
+import android.net.Uri
+import android.text.format.DateUtils
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -65,10 +67,12 @@ import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -97,6 +101,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
@@ -130,6 +135,7 @@ import com.spendwise.app.domain.AccountType
 import com.spendwise.app.domain.Category
 import com.spendwise.app.domain.Expense
 import com.spendwise.app.domain.Budget
+import com.spendwise.app.data.BackupSettings
 import com.spendwise.app.data.CategoryDeletion
 import com.spendwise.app.domain.MerchantNames
 import com.spendwise.app.domain.MoneyFormatter
@@ -3922,6 +3928,10 @@ internal fun V2SettingsSheet(
     onManageCategories: () -> Unit,
     onBackup: () -> Unit,
     onRestore: () -> Unit,
+    autoBackup: BackupSettings,
+    onAutoBackupToggle: (Boolean) -> Unit,
+    onChooseBackupFolder: () -> Unit,
+    onBackupNow: () -> Unit,
     onDismiss: () -> Unit
 ) {
     // Drag-to-dismiss with the scrim dimming in lockstep — see V2TxDetailSheet
@@ -4093,11 +4103,137 @@ internal fun V2SettingsSheet(
                                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = AppOnSurfaceVariant, modifier = Modifier.size(16.dp))
                             }
                         }
+
+                        // ── Automatic backups ────────────────────────────
+                        // Daily WorkManager job writing dated JSON backups
+                        // into a user-chosen folder (pick a cloud-synced one
+                        // and the backup leaves the phone). Kept as its own
+                        // group so status/config reads as one unit.
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(22.dp))
+                                .background(AppSurfaceLow)
+                                .padding(horizontal = 4.dp, vertical = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            val hasFolder = autoBackup.treeUri != null
+                            // Toggle row
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .clickable { onAutoBackupToggle(!autoBackup.enabled) }
+                                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                V2Tile(color = SwVioletSoft, icon = Icons.Filled.CloudUpload, size = 36.dp)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Automatic backups", color = SwInk, style = v2T(14f, FontWeight.Bold))
+                                    Text("Save a backup file once a day", color = AppOnSurfaceVariant, style = v2T(12f, FontWeight.Medium))
+                                }
+                                // Track + knob toggle — the app deliberately
+                                // avoids Material Switch styling everywhere.
+                                Box(
+                                    modifier = Modifier
+                                        .width(46.dp)
+                                        .height(28.dp)
+                                        .clip(RoundedCornerShape(percent = 50))
+                                        .background(if (autoBackup.enabled) SwViolet else AppSurfaceContainer)
+                                        .padding(3.dp),
+                                    contentAlignment = if (autoBackup.enabled) Alignment.CenterEnd else Alignment.CenterStart
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(22.dp)
+                                            .clip(CircleShape)
+                                            .background(Color.White)
+                                    )
+                                }
+                            }
+
+                            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(v2Hairline()))
+
+                            // Folder row — re-pickable at any time; a new pick
+                            // replaces the old grant.
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .clickable { onChooseBackupFolder() }
+                                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                V2Tile(color = SwButter, icon = Icons.Filled.Folder, size = 36.dp)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Backup folder", color = SwInk, style = v2T(14f, FontWeight.Bold))
+                                    Text(
+                                        text = autoBackup.treeUri?.let { backupFolderLabel(it) } ?: "Choose where backups are saved",
+                                        color = AppOnSurfaceVariant,
+                                        style = v2T(12f, FontWeight.Medium),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = AppOnSurfaceVariant, modifier = Modifier.size(16.dp))
+                            }
+
+                            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(v2Hairline()))
+
+                            // Back up now — one-off run of the same worker.
+                            // Needs a folder; dimmed and inert without one.
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .alpha(if (hasFolder) 1f else 0.45f)
+                                    .clickable(enabled = hasFolder) {
+                                        onDismiss()
+                                        onBackupNow()
+                                    }
+                                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                V2Tile(color = SwMint, icon = Icons.Filled.CloudUpload, size = 36.dp)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Back up now", color = SwInk, style = v2T(14f, FontWeight.Bold))
+                                    Text(
+                                        text = when {
+                                            autoBackup.lastError != null -> autoBackup.lastError
+                                            autoBackup.lastBackupMillis != null -> {
+                                                val relative = DateUtils.getRelativeTimeSpanString(autoBackup.lastBackupMillis)
+                                                val n = autoBackup.lastBackupExpenseCount ?: 0
+                                                "Last backup: $relative ($n expense${if (n == 1) "" else "s"})"
+                                            }
+                                            else -> "No automatic backups yet"
+                                        },
+                                        color = if (autoBackup.lastError != null) SwCoral else AppOnSurfaceVariant,
+                                        style = v2T(12f, FontWeight.Medium)
+                                    )
+                                }
+                                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = AppOnSurfaceVariant, modifier = Modifier.size(16.dp))
+                            }
+                        }
                     }
                 }
             }
         }
     }
+}
+
+/**
+ * Human-readable folder name out of a SAF tree URI. The last path segment of
+ * a tree URI is `<volume>:<path>` (e.g. "primary:Backups/SpendWise"), so the
+ * text after the final ':' or '/' is the folder the user actually picked.
+ * Pure string parsing — no ContentResolver round-trip per recomposition.
+ */
+private fun backupFolderLabel(treeUri: String): String {
+    val segment = Uri.parse(treeUri).lastPathSegment ?: return treeUri
+    val label = segment.substringAfterLast(':').substringAfterLast('/')
+    return label.ifBlank { "Storage root" }
 }
 
 // Confirmation modal shown when the user taps "Restore from backup". Restore

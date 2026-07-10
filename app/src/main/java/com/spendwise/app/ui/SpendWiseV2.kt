@@ -152,6 +152,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.spendwise.app.analytics.MonthlySpendingSummary
+import com.spendwise.app.backup.AutoBackupWorker
 import com.spendwise.app.domain.Account
 import com.spendwise.app.domain.AccountType
 import com.spendwise.app.domain.Category
@@ -405,6 +406,25 @@ fun ExpenseTrackerApp(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) viewModel.importBackup(uri)
+    }
+
+    // Automatic-backup folder picker. Unlike the one-shot CreateDocument URI
+    // above, the tree URI must outlive this process (the daily worker writes
+    // into it), so we take the persistable read+write grant before handing
+    // it to the ViewModel. Picking a folder also turns the toggle on — that's
+    // the only reason the picker ever opens.
+    val autoBackupSettings by viewModel.autoBackupSettings.collectAsStateWithLifecycle()
+    val backupFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                AutoBackupWorker.URI_PERMISSION_FLAGS
+            )
+            viewModel.setAutoBackupFolder(uri)
+            viewModel.setAutoBackupEnabled(true)
+        }
     }
 
     // Surface the outcome of any backup/restore op as a long toast. Using
@@ -684,6 +704,17 @@ fun ExpenseTrackerApp(
                     exportLauncher.launch("spendwise-backup-$stamp.json")
                 },
                 onRestore = { restoreConfirmOpen = true },
+                autoBackup = autoBackupSettings,
+                onAutoBackupToggle = { enabled ->
+                    if (enabled && autoBackupSettings.treeUri == null) {
+                        // No folder yet — the pick itself enables the toggle.
+                        backupFolderLauncher.launch(null)
+                    } else {
+                        viewModel.setAutoBackupEnabled(enabled)
+                    }
+                },
+                onChooseBackupFolder = { backupFolderLauncher.launch(null) },
+                onBackupNow = viewModel::backupNow,
                 onDismiss = { settingsOpen = false }
             )
             V2RestoreConfirmSheet(

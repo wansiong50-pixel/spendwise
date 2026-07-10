@@ -9,8 +9,11 @@ import androidx.lifecycle.viewModelScope
 import com.spendwise.app.AppContainer
 import com.spendwise.app.analytics.MonthlySpendingSummary
 import com.spendwise.app.analytics.SpendingAnalyzer
+import com.spendwise.app.backup.AutoBackupWorker
 import com.spendwise.app.data.AppearancePreferenceStore
 import com.spendwise.app.data.ArchiveAccountResult
+import com.spendwise.app.data.BackupPreferenceStore
+import com.spendwise.app.data.BackupSettings
 import com.spendwise.app.data.CategoryDeletion
 import com.spendwise.app.data.ExpenseRepository
 import com.spendwise.app.domain.Account
@@ -89,7 +92,8 @@ class ExpenseTrackerViewModel(
     private val expenseRepository: ExpenseRepository,
     private val spendingAnalyzer: SpendingAnalyzer,
     private val appearancePreferenceStore: AppearancePreferenceStore,
-    private val backupManager: BackupManager
+    private val backupManager: BackupManager,
+    private val backupPreferenceStore: BackupPreferenceStore
 ) : AndroidViewModel(application) {
 
     private val zoneId = ZoneId.of("Asia/Kuala_Lumpur")
@@ -531,6 +535,45 @@ class ExpenseTrackerViewModel(
         }
     }
 
+    // ── Automatic backups ────────────────────────────────────────────────
+
+    val autoBackupSettings: StateFlow<BackupSettings> = backupPreferenceStore.settings.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = BackupSettings()
+    )
+
+    /**
+     * Flip the daily-backup toggle. Scheduling lives here (not in the UI) so
+     * the persisted flag and the WorkManager job can never disagree.
+     */
+    fun setAutoBackupEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            backupPreferenceStore.setEnabled(enabled)
+        }
+        if (enabled) {
+            AutoBackupWorker.schedule(getApplication())
+        } else {
+            AutoBackupWorker.cancel(getApplication())
+        }
+    }
+
+    /**
+     * Persist the backup folder. The UI must take the persistable URI
+     * permission (with [AutoBackupWorker.URI_PERMISSION_FLAGS]) before
+     * calling this — the worker re-checks the grant on every run.
+     */
+    fun setAutoBackupFolder(uri: Uri) {
+        viewModelScope.launch {
+            backupPreferenceStore.setTreeUri(uri.toString())
+        }
+    }
+
+    /** One-off backup into the chosen folder — the "Back up now" button. */
+    fun backupNow() {
+        AutoBackupWorker.backupNow(getApplication())
+    }
+
     /**
      * Create a new account. Returns null on success or a non-null error
      * message suitable for inline display in the form. Validates name
@@ -657,7 +700,8 @@ class ExpenseTrackerViewModelFactory(
             expenseRepository = appContainer.expenseRepository,
             spendingAnalyzer = appContainer.spendingAnalyzer,
             appearancePreferenceStore = appContainer.appearancePreferenceStore,
-            backupManager = appContainer.backupManager
+            backupManager = appContainer.backupManager,
+            backupPreferenceStore = appContainer.backupPreferenceStore
         ) as T
     }
 }
