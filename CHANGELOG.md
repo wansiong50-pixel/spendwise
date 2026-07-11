@@ -2,7 +2,7 @@
 
 All notable changes to SpendWise are documented here.
 
-## [Unreleased]
+## [1.4] — 2026-07-11
 
 ### Added
 - **Recurring transactions** — define rules for rent, subscriptions, and
