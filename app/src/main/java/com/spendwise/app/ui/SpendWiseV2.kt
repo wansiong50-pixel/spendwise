@@ -323,6 +323,7 @@ private const val ROUTE_ACCOUNTS = "accounts"
 private const val ROUTE_ACCOUNT_FORM = "account_form?accountId={accountId}"
 private const val ARG_ACCOUNT_ID = "accountId"
 private const val ROUTE_CATEGORIES = "categories"
+private const val ROUTE_RECURRING = "recurring"
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  Entry shell
@@ -447,6 +448,20 @@ fun ExpenseTrackerApp(
         }
         Toast.makeText(context, message, Toast.LENGTH_LONG).show()
         viewModel.clearBackupResult()
+    }
+
+    // Announce the recurring catch-up ("Logged 2 recurring transactions") the
+    // same way — a toast keeps it out of every screen's layout, and clearing
+    // via the ViewModel stops a config change from re-announcing.
+    val recurringCatchUp by viewModel.recurringCatchUpCount.collectAsStateWithLifecycle()
+    LaunchedEffect(recurringCatchUp) {
+        val n = recurringCatchUp ?: return@LaunchedEffect
+        Toast.makeText(
+            context,
+            "Logged $n recurring transaction${if (n == 1) "" else "s"}",
+            Toast.LENGTH_LONG
+        ).show()
+        viewModel.clearRecurringCatchUp()
     }
 
     // Single source of truth for switching between Home / Activity / Insights.
@@ -611,6 +626,18 @@ fun ExpenseTrackerApp(
                         onDeleteCategoryWithStrategy = viewModel::deleteCategoryWithStrategy
                     )
                 }
+                composable(ROUTE_RECURRING) {
+                    val recurringRules by viewModel.recurringRules.collectAsStateWithLifecycle()
+                    V2RecurringScreen(
+                        rules = recurringRules,
+                        categories = state.categories,
+                        accounts = state.accounts,
+                        onBack = { navController.popBackStack() },
+                        onSave = viewModel::saveRecurringRule,
+                        onDelete = viewModel::deleteRecurringRule,
+                        onSetPaused = viewModel::setRecurringRulePaused
+                    )
+                }
             }
 
             val hideBottomNav = accountPickerOpen || categoryPickerOpen || monthPickerOpen || customRangeOpen || settingsOpen || yearPickerOpen || restoreConfirmOpen || (openedTxId != null)
@@ -693,6 +720,7 @@ fun ExpenseTrackerApp(
                 visible = settingsOpen,
                 onManageAccounts = { navController.navigate(ROUTE_ACCOUNTS) },
                 onManageCategories = { navController.navigate(ROUTE_CATEGORIES) },
+                onManageRecurring = { navController.navigate(ROUTE_RECURRING) },
                 onBackup = {
                     // Suggested filename includes a timestamp so the user
                     // ends up with a sortable history (spendwise-backup-20260526-2230.json,

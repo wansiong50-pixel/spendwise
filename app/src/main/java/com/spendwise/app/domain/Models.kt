@@ -101,3 +101,47 @@ data class RangeStats(
     val entryCount: Int,
     val spendCents: Long
 )
+
+/**
+ * How often a recurring rule fires. Stored as a string key (same pattern as
+ * [AccountType]) so adding a cadence never needs a schema migration; unknown
+ * stored values fall back to [Monthly] in the mapper.
+ */
+enum class RecurrenceCadence(val storageKey: String, val displayLabel: String) {
+    Weekly("WEEKLY", "Weekly"),
+    Monthly("MONTHLY", "Monthly"),
+    Yearly("YEARLY", "Yearly");
+
+    companion object {
+        fun fromStorageKey(key: String): RecurrenceCadence =
+            entries.firstOrNull { it.storageKey == key } ?: Monthly
+    }
+}
+
+/**
+ * A recurring transaction template (rent, subscription, salary). Real
+ * [Expense] rows are materialized from it on app launch whenever
+ * [nextDueEpochDay] (KL-calendar epoch day) has passed.
+ *
+ * [anchorEpochDay] is the user-picked first occurrence and never moves — it
+ * keeps a month-end rule on the intended day across short months.
+ * [categoryName]/[categoryColor]/[categoryIconName] are joined in by the
+ * repository for display, mirroring [Expense].
+ */
+data class RecurringRule(
+    val id: Long,
+    val amountCents: Long,
+    val categoryId: Long,
+    val categoryName: String,
+    val accountId: Long,
+    val merchant: String,
+    val notes: String,
+    val cadence: RecurrenceCadence,
+    val anchorEpochDay: Long,
+    val nextDueEpochDay: Long,
+    val isPaused: Boolean,
+    val createdAtMillis: Long,
+    val categoryIconName: String = "",
+    val categoryColor: Long? = null,
+    val isIncome: Boolean = false
+)

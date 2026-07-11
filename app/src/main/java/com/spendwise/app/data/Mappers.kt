@@ -4,6 +4,8 @@ import com.spendwise.app.domain.Account
 import com.spendwise.app.domain.AccountType
 import com.spendwise.app.domain.Category
 import com.spendwise.app.domain.Expense
+import com.spendwise.app.domain.RecurrenceCadence
+import com.spendwise.app.domain.RecurringRule
 
 fun CategoryEntity.toDomain(): Category {
     return Category(
@@ -29,6 +31,26 @@ fun ExpenseEntity.toDomain(category: CategoryEntity?): Expense {
         createdAtMillis = createdAtMillis,
         categoryIconName = category?.iconName.orEmpty(),
         categoryColor = category?.color
+    )
+}
+
+fun RecurringRuleEntity.toDomain(category: CategoryEntity?): RecurringRule {
+    return RecurringRule(
+        id = id,
+        amountCents = amountCents,
+        categoryId = categoryId,
+        categoryName = category?.name ?: "Uncategorized",
+        accountId = accountId,
+        merchant = merchant,
+        notes = notes,
+        cadence = RecurrenceCadence.fromStorageKey(cadence),
+        anchorEpochDay = anchorEpochDay,
+        nextDueEpochDay = nextDueEpochDay,
+        isPaused = isPaused,
+        createdAtMillis = createdAtMillis,
+        categoryIconName = category?.iconName.orEmpty(),
+        categoryColor = category?.color,
+        isIncome = category?.isIncomeAdjustment == true
     )
 }
 

@@ -9,8 +9,12 @@ import com.spendwise.app.domain.Expense
 import com.spendwise.app.domain.Budget
 import com.spendwise.app.domain.MonthlyAggregate
 import com.spendwise.app.domain.RangeStats
+import com.spendwise.app.domain.RecurrenceCadence
+import com.spendwise.app.domain.RecurrenceSchedule
+import com.spendwise.app.domain.RecurringRule
 import java.time.LocalDate
 import java.time.YearMonth
+import java.time.ZoneId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
@@ -21,7 +25,8 @@ class DefaultExpenseRepository(
     private val expenseDao: ExpenseDao,
     private val categoryDao: CategoryDao,
     private val accountDao: AccountDao,
-    private val budgetDao: BudgetDao
+    private val budgetDao: BudgetDao,
+    private val recurringRuleDao: RecurringRuleDao
 ) : ExpenseRepository {
     override val categories: Flow<List<Category>> = categoryDao
         .observeCategories()
@@ -246,21 +251,31 @@ class DefaultExpenseRepository(
 
     override suspend fun deleteCustomCategory(id: Long): Boolean {
         if (categoryDao.expenseCountForCategory(id) > 0) return false
-        return categoryDao.deleteCustomCategory(id) > 0
+        // A rule without its category is meaningless, so rules die with the
+        // category (same transaction — the rules' RESTRICT FK would otherwise
+        // block the category row's removal).
+        return database.withTransaction {
+            recurringRuleDao.deleteByCategory(id)
+            categoryDao.deleteCustomCategory(id) > 0
+        }
     }
 
     override suspend fun deleteCustomCategory(id: Long, strategy: CategoryDeletion): Boolean {
         // Single transaction: reassign-or-delete the expenses FIRST so the FK
         // (RESTRICT) is satisfied, then drop the category row. If any step
         // fails, the whole thing rolls back and the DB stays consistent.
+        // Recurring rules follow the same strategy as the expenses: migrated
+        // along on Migrate, dropped on DeleteExpenses.
         return database.withTransaction {
             when (strategy) {
                 is CategoryDeletion.Migrate -> {
                     if (strategy.destinationId == id) return@withTransaction false
                     expenseDao.reassignExpenses(fromId = id, toId = strategy.destinationId)
+                    recurringRuleDao.reassignCategory(fromId = id, toId = strategy.destinationId)
                 }
                 CategoryDeletion.DeleteExpenses -> {
                     expenseDao.deleteExpensesByCategory(id)
+                    recurringRuleDao.deleteByCategory(id)
                 }
             }
             categoryDao.deleteCustomCategory(id) > 0
@@ -340,6 +355,109 @@ class DefaultExpenseRepository(
     override suspend fun deleteCategoryBudget(categoryId: Long) {
         budgetDao.deleteForCategory(categoryId)
     }
+
+    // ── Recurring transactions ───────────────────────────────────────────
+
+    override val recurringRules: Flow<List<RecurringRule>> = combine(
+        recurringRuleDao.observeRules(),
+        categoryDao.observeCategories()
+    ) { ruleEntities, categoryEntities ->
+        val categoryById = categoryEntities.associateBy { it.id }
+        ruleEntities.map { it.toDomain(categoryById[it.categoryId]) }
+    }
+
+    override suspend fun saveRecurringRule(
+        id: Long?,
+        amountCents: Long,
+        categoryId: Long,
+        accountId: Long,
+        merchant: String,
+        notes: String,
+        cadence: RecurrenceCadence,
+        firstOccurrenceEpochDay: Long
+    ) {
+        if (id == null) {
+            recurringRuleDao.insert(
+                RecurringRuleEntity(
+                    amountCents = amountCents,
+                    categoryId = categoryId,
+                    accountId = accountId,
+                    merchant = merchant.trim(),
+                    notes = notes.trim(),
+                    cadence = cadence.storageKey,
+                    anchorEpochDay = firstOccurrenceEpochDay,
+                    nextDueEpochDay = firstOccurrenceEpochDay,
+                    isPaused = false,
+                    createdAtMillis = System.currentTimeMillis()
+                )
+            )
+            return
+        }
+
+        val existing = recurringRuleDao.observeRules().first().firstOrNull { it.id == id } ?: return
+        val scheduleChanged = existing.anchorEpochDay != firstOccurrenceEpochDay ||
+            existing.cadence != cadence.storageKey
+        recurringRuleDao.update(
+            existing.copy(
+                amountCents = amountCents,
+                categoryId = categoryId,
+                accountId = accountId,
+                merchant = merchant.trim(),
+                notes = notes.trim(),
+                cadence = cadence.storageKey,
+                anchorEpochDay = firstOccurrenceEpochDay,
+                // Same schedule → keep the advanced due date so editing the
+                // amount doesn't replay occurrences that already logged.
+                // Changed schedule → restart from the new first occurrence.
+                nextDueEpochDay = if (scheduleChanged) firstOccurrenceEpochDay else existing.nextDueEpochDay
+            )
+        )
+    }
+
+    override suspend fun deleteRecurringRule(id: Long) {
+        recurringRuleDao.deleteById(id)
+    }
+
+    override suspend fun setRecurringRulePaused(id: Long, paused: Boolean) {
+        recurringRuleDao.setPaused(id, paused)
+    }
+
+    override suspend fun processDueRecurringRules(todayEpochDay: Long): Int {
+        val due = recurringRuleDao.dueRules(todayEpochDay)
+        if (due.isEmpty()) return 0
+
+        val today = LocalDate.ofEpochDay(todayEpochDay)
+        var logged = 0
+        // One transaction for the whole catch-up: either every due occurrence
+        // lands with its rule's schedule advanced, or nothing changes. That
+        // makes a crash mid-catch-up safe — the next launch simply redoes it.
+        database.withTransaction {
+            for (rule in due) {
+                val result = RecurrenceSchedule.occurrencesDue(
+                    nextDue = LocalDate.ofEpochDay(rule.nextDueEpochDay),
+                    today = today,
+                    cadence = RecurrenceCadence.fromStorageKey(rule.cadence),
+                    anchor = LocalDate.ofEpochDay(rule.anchorEpochDay)
+                )
+                for (date in result.dates) {
+                    expenseDao.insert(
+                        ExpenseEntity(
+                            amountCents = rule.amountCents,
+                            categoryId = rule.categoryId,
+                            accountId = rule.accountId,
+                            merchant = rule.merchant,
+                            notes = rule.notes,
+                            occurredAtMillis = date.atStartOfDay(ZONE_KL).toInstant().toEpochMilli(),
+                            createdAtMillis = System.currentTimeMillis()
+                        )
+                    )
+                    logged++
+                }
+                recurringRuleDao.advanceNextDue(rule.id, result.newNextDue.toEpochDay())
+            }
+        }
+        return logged
+    }
 }
 
 private fun <T, R> Flow<List<T>>.mapList(transform: (T) -> R): Flow<List<R>> {
@@ -352,3 +470,7 @@ private fun <T, R> Flow<List<T>>.mapList(transform: (T) -> R): Flow<List<R>> {
  * memory bounded as the ledger grows over years.
  */
 private const val RECENT_EXPENSES_LIMIT = 500
+
+// Recurring occurrences are calendar dates; converting them to the stored
+// occurredAtMillis uses the same KL zone as everything else in the app.
+private val ZONE_KL = ZoneId.of("Asia/Kuala_Lumpur")

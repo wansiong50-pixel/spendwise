@@ -2,6 +2,17 @@
 
 All notable changes to SpendWise are documented here.
 
+## [Unreleased]
+
+### Added
+- **Recurring transactions** — define rules for rent, subscriptions, and
+  salary (weekly / monthly / yearly). Due occurrences are logged
+  automatically when the app opens; time away is backfilled with correct
+  dates (capped at 36 per rule). Month-end anchors survive short months
+  (a rule on the 31st fires Feb 28, then returns to Mar 31). Rules can be
+  paused, edited, and deleted from Settings → Recurring transactions, and
+  are included in backups.
+
 ## [1.3] — 2026-07-10
 
 First open-source release.

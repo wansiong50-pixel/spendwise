@@ -94,6 +94,57 @@ data class BudgetEntity(
     val monthlyLimitCents: Long
 )
 
+/**
+ * A recurring transaction template — rent, a subscription, a salary. The app
+ * materializes real [ExpenseEntity] rows from it on launch whenever
+ * [nextDueEpochDay] has passed, then advances the due date by [cadence].
+ *
+ * Dates are stored as epoch days of the KL-time calendar date (matching how
+ * the rest of the app buckets days) rather than millis — a recurrence is a
+ * calendar concept ("the 1st of every month"), not an instant.
+ *
+ * [anchorEpochDay] is the first occurrence the user picked and never moves;
+ * it preserves the intended day-of-month across short months (rule anchored
+ * on the 31st fires Feb 28, then back to Mar 31 — without the anchor the day
+ * would ratchet down permanently after February).
+ *
+ * FKs are RESTRICT like expenses'; the category-deletion flow explicitly
+ * reassigns or deletes rules alongside the expenses so the RESTRICT never
+ * fires in practice.
+ */
+@Entity(
+    tableName = "recurring_rules",
+    foreignKeys = [
+        ForeignKey(
+            entity = CategoryEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["categoryId"],
+            onDelete = ForeignKey.RESTRICT
+        ),
+        ForeignKey(
+            entity = AccountEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["accountId"],
+            onDelete = ForeignKey.RESTRICT
+        )
+    ],
+    indices = [Index("categoryId"), Index("accountId")]
+)
+data class RecurringRuleEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val amountCents: Long,
+    val categoryId: Long,
+    val accountId: Long,
+    val merchant: String,
+    val notes: String,
+    /** WEEKLY | MONTHLY | YEARLY — string so new cadences skip a migration. */
+    val cadence: String,
+    val anchorEpochDay: Long,
+    val nextDueEpochDay: Long,
+    val isPaused: Boolean = false,
+    val createdAtMillis: Long
+)
+
 fun BudgetEntity.toDomain(): com.spendwise.app.domain.Budget {
     return com.spendwise.app.domain.Budget(
         id = id,

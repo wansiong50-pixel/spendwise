@@ -28,6 +28,8 @@ import com.spendwise.app.domain.MerchantNames
 import com.spendwise.app.domain.MoneyFormatter
 import com.spendwise.app.domain.MonthlyAggregate
 import com.spendwise.app.domain.RangeStats
+import com.spendwise.app.domain.RecurrenceCadence
+import com.spendwise.app.domain.RecurringRule
 import com.spendwise.app.export.BackupManager
 import com.spendwise.app.export.BackupResult
 import java.time.LocalDate
@@ -313,6 +315,13 @@ class ExpenseTrackerViewModel(
         viewModelScope.launch {
             expenseRepository.seedDefaultCategories()
             expenseRepository.seedDefaultAccount()
+            // Recurring catch-up runs once per process start, after seeding so
+            // FK targets exist on a fresh install. Anything that came due
+            // since the last launch is materialized here.
+            val logged = expenseRepository.processDueRecurringRules(
+                LocalDate.now(zoneId).toEpochDay()
+            )
+            if (logged > 0) recurringCatchUpCount.value = logged
         }
     }
 
@@ -572,6 +581,85 @@ class ExpenseTrackerViewModel(
     /** One-off backup into the chosen folder — the "Back up now" button. */
     fun backupNow() {
         AutoBackupWorker.backupNow(getApplication())
+    }
+
+    // ── Recurring transactions ───────────────────────────────────────────
+
+    val recurringRules: StateFlow<List<RecurringRule>> = expenseRepository.recurringRules
+        .flowOn(Dispatchers.Default)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList()
+        )
+
+    // One-shot count of expenses materialized by the launch catch-up. The
+    // shell surfaces it as a toast ("Logged 2 recurring transactions") and
+    // clears it so a config change doesn't re-announce.
+    val recurringCatchUpCount = MutableStateFlow<Int?>(null)
+
+    fun clearRecurringCatchUp() {
+        recurringCatchUpCount.value = null
+    }
+
+    /**
+     * Create ([id] == null) or update a recurring rule. Returns null on
+     * success or an inline-displayable error message — same contract as
+     * [createAccount].
+     */
+    fun saveRecurringRule(
+        id: Long?,
+        amountInput: String,
+        categoryId: Long?,
+        accountId: Long?,
+        merchant: String,
+        notes: String,
+        cadence: RecurrenceCadence,
+        firstOccurrenceInput: String
+    ): String? {
+        val amountCents = MoneyFormatter.parseToCents(amountInput)
+            ?: return "Enter an amount above RM 0.00."
+        if (categoryId == null) return "Choose a category."
+        if (accountId == null) return "Choose an account."
+        val isIncome = dashboardState.value.categories
+            .firstOrNull { it.id == categoryId }
+            ?.isIncomeAdjustment == true
+        val name = merchant.trim()
+        if (name.isBlank() && !isIncome) return "Add a merchant or description."
+        val firstOccurrence = runCatching { LocalDate.parse(firstOccurrenceInput) }.getOrNull()
+            ?: return "Use date format YYYY-MM-DD."
+
+        viewModelScope.launch {
+            expenseRepository.saveRecurringRule(
+                id = id,
+                amountCents = amountCents,
+                categoryId = categoryId,
+                accountId = accountId,
+                merchant = name,
+                notes = notes,
+                cadence = cadence,
+                firstOccurrenceEpochDay = firstOccurrence.toEpochDay()
+            )
+            // A rule starting today (or backdated) should hit the ledger
+            // immediately, not on the next launch.
+            val logged = expenseRepository.processDueRecurringRules(
+                LocalDate.now(zoneId).toEpochDay()
+            )
+            if (logged > 0) recurringCatchUpCount.value = logged
+        }
+        return null
+    }
+
+    fun deleteRecurringRule(id: Long) {
+        viewModelScope.launch {
+            expenseRepository.deleteRecurringRule(id)
+        }
+    }
+
+    fun setRecurringRulePaused(id: Long, paused: Boolean) {
+        viewModelScope.launch {
+            expenseRepository.setRecurringRulePaused(id, paused)
+        }
     }
 
     /**

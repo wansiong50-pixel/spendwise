@@ -292,6 +292,56 @@ interface AccountDao {
 }
 
 @Dao
+interface RecurringRuleDao {
+    // Soonest-due first — the natural reading order for the management screen
+    // ("what's about to hit my ledger next").
+    @Query("SELECT * FROM recurring_rules ORDER BY nextDueEpochDay ASC, id ASC")
+    fun observeRules(): Flow<List<RecurringRuleEntity>>
+
+    // Active rules whose next occurrence is today or earlier — the launch
+    // catch-up processes exactly this set.
+    @Query("SELECT * FROM recurring_rules WHERE isPaused = 0 AND nextDueEpochDay <= :todayEpochDay")
+    suspend fun dueRules(todayEpochDay: Long): List<RecurringRuleEntity>
+
+    @Insert
+    suspend fun insert(rule: RecurringRuleEntity): Long
+
+    @Update
+    suspend fun update(rule: RecurringRuleEntity)
+
+    @Query("DELETE FROM recurring_rules WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("UPDATE recurring_rules SET nextDueEpochDay = :nextDueEpochDay WHERE id = :id")
+    suspend fun advanceNextDue(id: Long, nextDueEpochDay: Long)
+
+    @Query("UPDATE recurring_rules SET isPaused = :paused WHERE id = :id")
+    suspend fun setPaused(id: Long, paused: Boolean)
+
+    // Category-deletion support: rules follow the same strategy as the
+    // category's expenses (reassign on Migrate, delete on DeleteExpenses) so
+    // the RESTRICT FK never blocks the category row's removal.
+    @Query("UPDATE recurring_rules SET categoryId = :toId WHERE categoryId = :fromId")
+    suspend fun reassignCategory(fromId: Long, toId: Long): Int
+
+    @Query("DELETE FROM recurring_rules WHERE categoryId = :categoryId")
+    suspend fun deleteByCategory(categoryId: Long): Int
+
+    @Query("SELECT COUNT(*) FROM recurring_rules WHERE accountId = :accountId")
+    suspend fun countForAccount(accountId: Long): Int
+
+    // Backup/restore helpers.
+    @Query("SELECT * FROM recurring_rules")
+    suspend fun allOnce(): List<RecurringRuleEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(rules: List<RecurringRuleEntity>)
+
+    @Query("DELETE FROM recurring_rules")
+    suspend fun deleteAll()
+}
+
+@Dao
 interface BudgetDao {
     @Query("SELECT * FROM budgets")
     fun observeBudgets(): Flow<List<BudgetEntity>>

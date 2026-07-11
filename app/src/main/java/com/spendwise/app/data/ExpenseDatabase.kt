@@ -10,9 +10,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ExpenseEntity::class,
         CategoryEntity::class,
         BudgetEntity::class,
-        AccountEntity::class
+        AccountEntity::class,
+        RecurringRuleEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class ExpenseDatabase : RoomDatabase() {
@@ -20,6 +21,7 @@ abstract class ExpenseDatabase : RoomDatabase() {
     abstract fun categoryDao(): CategoryDao
     abstract fun accountDao(): AccountDao
     abstract fun budgetDao(): BudgetDao
+    abstract fun recurringRuleDao(): RecurringRuleDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -178,6 +180,39 @@ abstract class ExpenseDatabase : RoomDatabase() {
                 )
                 database.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_expenses_accountId` ON `expenses` (`accountId`)"
+                )
+            }
+        }
+
+        // Recurring transactions: templates the app materializes into real
+        // expense rows on launch. Column shapes and FK actions must match
+        // RecurringRuleEntity exactly or Room's validator aborts the open.
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `recurring_rules` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `amountCents` INTEGER NOT NULL,
+                        `categoryId` INTEGER NOT NULL,
+                        `accountId` INTEGER NOT NULL,
+                        `merchant` TEXT NOT NULL,
+                        `notes` TEXT NOT NULL,
+                        `cadence` TEXT NOT NULL,
+                        `anchorEpochDay` INTEGER NOT NULL,
+                        `nextDueEpochDay` INTEGER NOT NULL,
+                        `isPaused` INTEGER NOT NULL,
+                        `createdAtMillis` INTEGER NOT NULL,
+                        FOREIGN KEY(`categoryId`) REFERENCES `categories`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT,
+                        FOREIGN KEY(`accountId`) REFERENCES `accounts`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_recurring_rules_categoryId` ON `recurring_rules` (`categoryId`)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_recurring_rules_accountId` ON `recurring_rules` (`accountId`)"
                 )
             }
         }

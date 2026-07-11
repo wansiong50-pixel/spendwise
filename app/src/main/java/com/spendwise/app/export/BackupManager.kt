@@ -13,6 +13,8 @@ import com.spendwise.app.data.CategoryEntity
 import com.spendwise.app.data.ExpenseDao
 import com.spendwise.app.data.ExpenseDatabase
 import com.spendwise.app.data.ExpenseEntity
+import com.spendwise.app.data.RecurringRuleDao
+import com.spendwise.app.data.RecurringRuleEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -32,7 +34,7 @@ sealed interface BackupResult {
 // on it if needed. Kept as a const here (rather than reading from the
 // database) because it's part of the static contract for backups produced by
 // this build.
-private const val APP_DB_VERSION_AT_EXPORT: Int = 6
+private const val APP_DB_VERSION_AT_EXPORT: Int = 7
 
 class BackupManager(
     private val context: Context,
@@ -41,6 +43,7 @@ class BackupManager(
     private val categoryDao: CategoryDao,
     private val accountDao: AccountDao,
     private val budgetDao: BudgetDao,
+    private val recurringRuleDao: RecurringRuleDao,
     private val appearancePreferenceStore: AppearancePreferenceStore
 ) {
     // prettyPrint makes the file inspectable by a curious user opening it in
@@ -58,6 +61,7 @@ class BackupManager(
             val accounts = accountDao.allOnce()
             val budgets = budgetDao.allOnce()
             val expenses = expenseDao.allOnce()
+            val recurringRules = recurringRuleDao.allOnce()
             val darkMode = appearancePreferenceStore.startupDarkModePreference.first()
 
             val envelope = BackupEnvelope(
@@ -67,7 +71,8 @@ class BackupManager(
                 categories = categories.map { it.toBackup() },
                 accounts = accounts.map { it.toBackup() },
                 budgets = budgets.map { it.toBackup() },
-                expenses = expenses.map { it.toBackup() }
+                expenses = expenses.map { it.toBackup() },
+                recurringRules = recurringRules.map { it.toBackup() }
             )
 
             val payload = json.encodeToString(BackupEnvelope.serializer(), envelope)
@@ -108,6 +113,7 @@ class BackupManager(
             // user's current data is preserved if the import explodes
             // midway.
             database.withTransaction {
+                recurringRuleDao.deleteAll()
                 expenseDao.deleteAll()
                 budgetDao.deleteAll()
                 accountDao.deleteAll()
@@ -117,6 +123,7 @@ class BackupManager(
                 accountDao.insertAll(envelope.accounts.map { it.toEntity() })
                 budgetDao.insertAll(envelope.budgets.map { it.toEntity() })
                 expenseDao.insertAll(envelope.expenses.map { it.toEntity() })
+                recurringRuleDao.insertAll(envelope.recurringRules.map { it.toEntity() })
             }
 
             // DataStore lives outside the Room DB transaction, so we apply
@@ -203,5 +210,33 @@ private fun BackupExpense.toEntity() = ExpenseEntity(
     merchant = merchant,
     notes = notes,
     occurredAtMillis = occurredAtMillis,
+    createdAtMillis = createdAtMillis
+)
+
+private fun RecurringRuleEntity.toBackup() = BackupRecurringRule(
+    id = id,
+    amountCents = amountCents,
+    categoryId = categoryId,
+    accountId = accountId,
+    merchant = merchant,
+    notes = notes,
+    cadence = cadence,
+    anchorEpochDay = anchorEpochDay,
+    nextDueEpochDay = nextDueEpochDay,
+    isPaused = isPaused,
+    createdAtMillis = createdAtMillis
+)
+
+private fun BackupRecurringRule.toEntity() = RecurringRuleEntity(
+    id = id,
+    amountCents = amountCents,
+    categoryId = categoryId,
+    accountId = accountId,
+    merchant = merchant,
+    notes = notes,
+    cadence = cadence,
+    anchorEpochDay = anchorEpochDay,
+    nextDueEpochDay = nextDueEpochDay,
+    isPaused = isPaused,
     createdAtMillis = createdAtMillis
 )

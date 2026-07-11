@@ -8,6 +8,8 @@ import com.spendwise.app.domain.Expense
 import com.spendwise.app.domain.Budget
 import com.spendwise.app.domain.MonthlyAggregate
 import com.spendwise.app.domain.RangeStats
+import com.spendwise.app.domain.RecurrenceCadence
+import com.spendwise.app.domain.RecurringRule
 import java.time.LocalDate
 import kotlinx.coroutines.flow.Flow
 
@@ -186,4 +188,39 @@ interface ExpenseRepository {
 
     suspend fun saveCategoryBudget(categoryId: Long, limitCents: Long)
     suspend fun deleteCategoryBudget(categoryId: Long)
+
+    // ── Recurring transactions ───────────────────────────────────────────
+
+    /** All rules, soonest-due first, with category display data joined in. */
+    val recurringRules: Flow<List<RecurringRule>>
+
+    /**
+     * Create ([id] == null) or update a recurring rule. On update, the next
+     * due date is preserved when the schedule (cadence + first occurrence)
+     * is unchanged — editing the amount of a rule must not re-trigger a
+     * backfill — and reset to [firstOccurrenceEpochDay] when it changed.
+     */
+    suspend fun saveRecurringRule(
+        id: Long?,
+        amountCents: Long,
+        categoryId: Long,
+        accountId: Long,
+        merchant: String,
+        notes: String,
+        cadence: RecurrenceCadence,
+        firstOccurrenceEpochDay: Long
+    )
+
+    suspend fun deleteRecurringRule(id: Long)
+
+    suspend fun setRecurringRulePaused(id: Long, paused: Boolean)
+
+    /**
+     * Materialize expense rows for every active rule whose next occurrence is
+     * on or before [todayEpochDay] (KL calendar day), advancing each rule's
+     * schedule — all in one transaction. Returns how many expenses were
+     * logged so the UI can announce the catch-up. Safe to call on every
+     * launch; a no-op when nothing is due.
+     */
+    suspend fun processDueRecurringRules(todayEpochDay: Long): Int
 }

@@ -63,6 +63,7 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Check
@@ -3926,6 +3927,7 @@ internal fun V2SettingsSheet(
     visible: Boolean,
     onManageAccounts: () -> Unit,
     onManageCategories: () -> Unit,
+    onManageRecurring: () -> Unit,
     onBackup: () -> Unit,
     onRestore: () -> Unit,
     autoBackup: BackupSettings,
@@ -4047,6 +4049,30 @@ internal fun V2SettingsSheet(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text("Manage categories", color = SwInk, style = v2T(14f, FontWeight.Bold))
                                     Text("Customise spending & income categories", color = AppOnSurfaceVariant, style = v2T(12f, FontWeight.Medium))
+                                }
+                                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = AppOnSurfaceVariant, modifier = Modifier.size(16.dp))
+                            }
+
+                            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(v2Hairline()))
+
+                            // Recurring transactions — rules that auto-log
+                            // rent/subscriptions/salary on their schedule.
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .clickable {
+                                        onDismiss()
+                                        onManageRecurring()
+                                    }
+                                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                V2Tile(color = SwPink, icon = Icons.Filled.Autorenew, size = 36.dp)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Recurring transactions", color = SwInk, style = v2T(14f, FontWeight.Bold))
+                                    Text("Bills and income that log themselves", color = AppOnSurfaceVariant, style = v2T(12f, FontWeight.Medium))
                                 }
                                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = AppOnSurfaceVariant, modifier = Modifier.size(16.dp))
                             }
