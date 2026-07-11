@@ -103,6 +103,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -448,6 +449,23 @@ fun ExpenseTrackerApp(
         }
         Toast.makeText(context, message, Toast.LENGTH_LONG).show()
         viewModel.clearBackupResult()
+    }
+
+    // Re-run the recurring catch-up whenever the app returns to the
+    // foreground. The init-time run only covers process starts; Android keeps
+    // processes resident for days, so without this a rule due "today" would
+    // never log for users who switch back to the app instead of relaunching
+    // it. Concurrent-safe: the repository processes due rules inside one
+    // transaction.
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_START) {
+                viewModel.runRecurringCatchUp()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     // Announce the recurring catch-up ("Logged 2 recurring transactions") the

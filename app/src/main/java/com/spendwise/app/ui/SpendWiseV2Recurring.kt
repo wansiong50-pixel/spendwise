@@ -373,6 +373,10 @@ private fun V2RecurringFormSheet(
     }
     var datePickerOpen by remember(visible) { mutableStateOf(false) }
     var error by rememberSaveable(visible) { mutableStateOf<String?>(null) }
+    // Latch against double-tap on Save: a second tap in the same frame would
+    // insert the rule twice. Re-armed when validation fails (so the user can
+    // retry) and when the sheet reopens (keyed on `visible`).
+    var saveRequested by remember(visible) { mutableStateOf(false) }
 
     // firstDateInput is always written by the calendar picker, so this parse
     // can only fail for a pre-picker draft — fall back to today.
@@ -439,10 +443,14 @@ private fun V2RecurringFormSheet(
                         text = "Save",
                         color = SwViolet,
                         modifier = Modifier.pressableNoIndication {
-                            error = onSave(
-                                existing?.id, amountInput, categoryId, accountId,
-                                merchant, notes, cadence, firstDateInput
-                            )
+                            if (!saveRequested) {
+                                saveRequested = true
+                                error = onSave(
+                                    existing?.id, amountInput, categoryId, accountId,
+                                    merchant, notes, cadence, firstDateInput
+                                )
+                                if (error != null) saveRequested = false
+                            }
                         },
                         style = v2T(13.5f, FontWeight.Bold)
                     )
@@ -639,7 +647,14 @@ private fun V2RecurringFormSheet(
                     }
                 }
                 Text(
-                    text = "Past dates backfill each missed occurrence when you save.",
+                    // Backdated backfill only happens at creation; edits
+                    // apply forward so a schedule change can't replay
+                    // already-logged history (see saveRecurringRule).
+                    text = if (isEdit) {
+                        "Schedule changes apply to upcoming occurrences only — logged entries stay as they are."
+                    } else {
+                        "Past dates backfill each missed occurrence when you save."
+                    },
                     color = AppOnSurfaceVariant,
                     style = v2T(11.5f, FontWeight.Medium),
                     modifier = Modifier.padding(start = 22.dp, end = 22.dp, top = 6.dp)

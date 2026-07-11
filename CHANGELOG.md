@@ -13,6 +13,19 @@ All notable changes to SpendWise are documented here.
   paused, edited, and deleted from Settings → Recurring transactions, and
   are included in backups.
 
+### Fixed (pre-release hardening of recurring rules)
+- Editing a rule's schedule (cadence or start date) now applies to upcoming
+  occurrences only — it previously replayed the whole history from the
+  anchor date, duplicating every already-logged entry.
+- Resuming a paused rule now continues from the next future occurrence
+  instead of backfilling the entire paused gap.
+- The due-rule check now runs inside a single database transaction and also
+  fires when the app returns to the foreground and after a backup restore —
+  previously concurrent checks could double-log, and a long-resident app
+  process would never log newly due rules until fully restarted.
+- The recurring form's Save button ignores double-taps (no duplicate rules).
+- An account referenced by a recurring rule can no longer be archived.
+
 ## [1.3] — 2026-07-10
 
 First open-source release.

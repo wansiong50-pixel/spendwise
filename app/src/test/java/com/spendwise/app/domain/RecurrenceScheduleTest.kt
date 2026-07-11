@@ -102,6 +102,49 @@ class RecurrenceScheduleTest {
     }
 
     @Test
+    fun `firstOccurrenceOnOrAfter returns a future anchor unchanged`() {
+        val anchor = LocalDate.of(2026, 9, 1)
+        val result = RecurrenceSchedule.firstOccurrenceOnOrAfter(
+            anchor, RecurrenceCadence.Monthly, lowerBound = LocalDate.of(2026, 7, 12)
+        )
+        assertEquals(anchor, result)
+    }
+
+    @Test
+    fun `firstOccurrenceOnOrAfter fast-forwards a stale anchor without replaying`() {
+        // Rule anchored 11 May, edited/resumed on 12 Jul: next fire is 11 Aug
+        // (11 Jul already passed the lower bound of 13 Jul).
+        val result = RecurrenceSchedule.firstOccurrenceOnOrAfter(
+            anchor = LocalDate.of(2026, 5, 11),
+            cadence = RecurrenceCadence.Monthly,
+            lowerBound = LocalDate.of(2026, 7, 13)
+        )
+        assertEquals(LocalDate.of(2026, 8, 11), result)
+    }
+
+    @Test
+    fun `firstOccurrenceOnOrAfter returns the lower bound when it lands on an occurrence`() {
+        // Weekly from 10 Jul; lower bound exactly two weeks later.
+        val result = RecurrenceSchedule.firstOccurrenceOnOrAfter(
+            anchor = LocalDate.of(2026, 7, 10),
+            cadence = RecurrenceCadence.Weekly,
+            lowerBound = LocalDate.of(2026, 7, 24)
+        )
+        assertEquals(LocalDate.of(2026, 7, 24), result)
+    }
+
+    @Test
+    fun `firstOccurrenceOnOrAfter respects month-end clamping while advancing`() {
+        // Anchored 31 Jan, fast-forwarded into February: fires 28 Feb.
+        val result = RecurrenceSchedule.firstOccurrenceOnOrAfter(
+            anchor = jan31,
+            cadence = RecurrenceCadence.Monthly,
+            lowerBound = LocalDate.of(2026, 2, 1)
+        )
+        assertEquals(LocalDate.of(2026, 2, 28), result)
+    }
+
+    @Test
     fun `month-end backfill keeps each month on its own clamped day`() {
         // Anchored Jan 31, three months behind on Apr 15: Jan 31, Feb 28, Mar 31 due.
         val result = RecurrenceSchedule.occurrencesDue(

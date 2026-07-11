@@ -335,6 +335,13 @@ class DefaultExpenseRepository(
     override suspend fun archiveAccount(id: Long): ArchiveAccountResult {
         val count = accountDao.transactionCountForAccount(id)
         if (count > 0) return ArchiveAccountResult.Blocked(transactionCount = count)
+        // A rule pointing at an archived account would keep materializing
+        // expenses into a surface excluded from the dashboard total — block
+        // until the user retargets or deletes the rule.
+        val ruleCount = recurringRuleDao.countForAccount(id)
+        if (ruleCount > 0) {
+            return ArchiveAccountResult.Blocked(transactionCount = 0, recurringRuleCount = ruleCount)
+        }
         accountDao.archive(id)
         return ArchiveAccountResult.Archived
     }
@@ -394,9 +401,25 @@ class DefaultExpenseRepository(
             return
         }
 
-        val existing = recurringRuleDao.observeRules().first().firstOrNull { it.id == id } ?: return
+        val existing = recurringRuleDao.byId(id) ?: return
         val scheduleChanged = existing.anchorEpochDay != firstOccurrenceEpochDay ||
             existing.cadence != cadence.storageKey
+        // Same schedule → keep the advanced due date so editing the amount
+        // doesn't replay occurrences that already logged.
+        // Changed schedule → apply it to UPCOMING occurrences only (first
+        // occurrence of the new schedule strictly after today). Restarting
+        // from the anchor would replay history: a cadence-only edit on a
+        // months-old rule would instantly duplicate every logged occurrence.
+        // Backdated backfill is a create-time behavior, never an edit one.
+        val nextDueEpochDay = if (scheduleChanged) {
+            RecurrenceSchedule.firstOccurrenceOnOrAfter(
+                anchor = LocalDate.ofEpochDay(firstOccurrenceEpochDay),
+                cadence = cadence,
+                lowerBound = LocalDate.now(ZONE_KL).plusDays(1)
+            ).toEpochDay()
+        } else {
+            existing.nextDueEpochDay
+        }
         recurringRuleDao.update(
             existing.copy(
                 amountCents = amountCents,
@@ -406,10 +429,7 @@ class DefaultExpenseRepository(
                 notes = notes.trim(),
                 cadence = cadence.storageKey,
                 anchorEpochDay = firstOccurrenceEpochDay,
-                // Same schedule → keep the advanced due date so editing the
-                // amount doesn't replay occurrences that already logged.
-                // Changed schedule → restart from the new first occurrence.
-                nextDueEpochDay = if (scheduleChanged) firstOccurrenceEpochDay else existing.nextDueEpochDay
+                nextDueEpochDay = nextDueEpochDay
             )
         )
     }
@@ -419,19 +439,46 @@ class DefaultExpenseRepository(
     }
 
     override suspend fun setRecurringRulePaused(id: Long, paused: Boolean) {
-        recurringRuleDao.setPaused(id, paused)
+        if (paused) {
+            recurringRuleDao.setPaused(id, true)
+            return
+        }
+        // Resuming skips the paused gap: a pause means "these occurrences
+        // didn't happen" (cancelled subscription, moved out), so the schedule
+        // fast-forwards to its next occurrence from today instead of
+        // backfilling months of entries the user explicitly stopped. The
+        // maxOf keeps an already-future due date (paused and resumed the
+        // same day) from being pulled backward into a duplicate.
+        database.withTransaction {
+            val existing = recurringRuleDao.byId(id)
+            if (existing != null) {
+                val lowerBound = maxOf(
+                    LocalDate.now(ZONE_KL).toEpochDay(),
+                    existing.nextDueEpochDay
+                )
+                val fastForwarded = RecurrenceSchedule.firstOccurrenceOnOrAfter(
+                    anchor = LocalDate.ofEpochDay(existing.anchorEpochDay),
+                    cadence = RecurrenceCadence.fromStorageKey(existing.cadence),
+                    lowerBound = LocalDate.ofEpochDay(lowerBound)
+                )
+                recurringRuleDao.advanceNextDue(id, fastForwarded.toEpochDay())
+            }
+            recurringRuleDao.setPaused(id, false)
+        }
     }
 
     override suspend fun processDueRecurringRules(todayEpochDay: Long): Int {
-        val due = recurringRuleDao.dueRules(todayEpochDay)
-        if (due.isEmpty()) return 0
-
         val today = LocalDate.ofEpochDay(todayEpochDay)
         var logged = 0
-        // One transaction for the whole catch-up: either every due occurrence
-        // lands with its rule's schedule advanced, or nothing changes. That
-        // makes a crash mid-catch-up safe — the next launch simply redoes it.
+        // One transaction for the whole catch-up — INCLUDING the due-rules
+        // read. Catch-up runs from several triggers (process start, app
+        // foreground, rule save, restore); reading inside the transaction
+        // means a concurrent run sees the advanced due dates instead of the
+        // same stale set, which would double-log every occurrence. It also
+        // keeps a crash mid-catch-up safe: everything rolls back and the
+        // next run simply redoes it.
         database.withTransaction {
+            val due = recurringRuleDao.dueRules(todayEpochDay)
             for (rule in due) {
                 val result = RecurrenceSchedule.occurrencesDue(
                     nextDue = LocalDate.ofEpochDay(rule.nextDueEpochDay),

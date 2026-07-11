@@ -36,7 +36,13 @@ sealed interface CategoryDeletion {
  */
 sealed interface ArchiveAccountResult {
     data object Archived : ArchiveAccountResult
-    data class Blocked(val transactionCount: Int) : ArchiveAccountResult
+    data class Blocked(
+        val transactionCount: Int,
+        // Recurring rules also anchor to an account; archiving out from
+        // under one would keep logging money into a surface hidden from the
+        // dashboard total.
+        val recurringRuleCount: Int = 0
+    ) : ArchiveAccountResult
 }
 
 interface ExpenseRepository {

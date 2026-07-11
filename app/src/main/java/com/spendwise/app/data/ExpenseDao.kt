@@ -303,6 +303,11 @@ interface RecurringRuleDao {
     @Query("SELECT * FROM recurring_rules WHERE isPaused = 0 AND nextDueEpochDay <= :todayEpochDay")
     suspend fun dueRules(todayEpochDay: Long): List<RecurringRuleEntity>
 
+    // Suspend point-lookup (NOT the Flow) so callers inside withTransaction
+    // stay on the transaction thread — collecting a Flow there can deadlock.
+    @Query("SELECT * FROM recurring_rules WHERE id = :id LIMIT 1")
+    suspend fun byId(id: Long): RecurringRuleEntity?
+
     @Insert
     suspend fun insert(rule: RecurringRuleEntity): Long
 

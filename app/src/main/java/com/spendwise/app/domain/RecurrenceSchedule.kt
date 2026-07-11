@@ -59,6 +59,25 @@ object RecurrenceSchedule {
         return DueOccurrences(dates = due, newNextDue = cursor)
     }
 
+    /**
+     * The earliest occurrence of the schedule (anchored at [anchor]) that
+     * falls on or after [lowerBound]. Used wherever a schedule must move
+     * forward WITHOUT replaying history: editing a rule's schedule and
+     * resuming a paused rule both need "next future occurrence", never a
+     * backfill.
+     */
+    fun firstOccurrenceOnOrAfter(
+        anchor: LocalDate,
+        cadence: RecurrenceCadence,
+        lowerBound: LocalDate
+    ): LocalDate {
+        var cursor = anchor
+        while (cursor.isBefore(lowerBound)) {
+            cursor = nextOccurrence(cursor, cadence, anchor)
+        }
+        return cursor
+    }
+
     private fun withClampedDay(year: Int, month: Int, preferredDay: Int): LocalDate {
         val lastDay = LocalDate.of(year, month, 1).lengthOfMonth()
         return LocalDate.of(year, month, minOf(preferredDay, lastDay))

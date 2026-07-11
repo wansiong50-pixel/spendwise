@@ -315,13 +315,11 @@ class ExpenseTrackerViewModel(
         viewModelScope.launch {
             expenseRepository.seedDefaultCategories()
             expenseRepository.seedDefaultAccount()
-            // Recurring catch-up runs once per process start, after seeding so
-            // FK targets exist on a fresh install. Anything that came due
-            // since the last launch is materialized here.
-            val logged = expenseRepository.processDueRecurringRules(
-                LocalDate.now(zoneId).toEpochDay()
-            )
-            if (logged > 0) recurringCatchUpCount.value = logged
+            // Recurring catch-up after seeding so FK targets exist on a fresh
+            // install. Further runs fire on every app foreground (see the
+            // shell's ON_START observer) — a resident process would otherwise
+            // never notice a due date passing.
+            runRecurringCatchUpNow()
         }
     }
 
@@ -540,7 +538,14 @@ class ExpenseTrackerViewModel(
 
     fun importBackup(uri: Uri) {
         viewModelScope.launch {
-            backupResult.value = backupManager.importBackup(uri)
+            val result = backupManager.importBackup(uri)
+            backupResult.value = result
+            // A restored ledger may carry rules whose occurrences came due
+            // since the backup was made. Materialize them now instead of
+            // leaving a stale ledger until the next process restart.
+            if (result is BackupResult.ImportSuccess) {
+                runRecurringCatchUpNow()
+            }
         }
     }
 
@@ -600,6 +605,25 @@ class ExpenseTrackerViewModel(
 
     fun clearRecurringCatchUp() {
         recurringCatchUpCount.value = null
+    }
+
+    /**
+     * Run the recurring catch-up now. Fired from every trigger that can make
+     * occurrences newly due: process start (init), the app returning to the
+     * foreground (a resident process crossing midnight/a due date would
+     * otherwise never log), rule saves, and backup restores. Safe to call
+     * concurrently — the repository reads and advances due rules inside one
+     * transaction, so overlapping runs can't double-log.
+     */
+    fun runRecurringCatchUp() {
+        viewModelScope.launch { runRecurringCatchUpNow() }
+    }
+
+    private suspend fun runRecurringCatchUpNow() {
+        val logged = expenseRepository.processDueRecurringRules(
+            LocalDate.now(zoneId).toEpochDay()
+        )
+        if (logged > 0) recurringCatchUpCount.value = logged
     }
 
     /**
@@ -739,9 +763,15 @@ class ExpenseTrackerViewModel(
         return when (val result = expenseRepository.archiveAccount(accountId)) {
             ArchiveAccountResult.Archived -> null
             is ArchiveAccountResult.Blocked -> {
-                val n = result.transactionCount
-                val transactionWord = if (n == 1) "transaction" else "transactions"
-                "Can't archive — $n $transactionWord still point here."
+                if (result.recurringRuleCount > 0) {
+                    val r = result.recurringRuleCount
+                    val ruleWord = if (r == 1) "rule uses" else "rules use"
+                    "Can't archive — $r recurring $ruleWord this account."
+                } else {
+                    val n = result.transactionCount
+                    val transactionWord = if (n == 1) "transaction" else "transactions"
+                    "Can't archive — $n $transactionWord still point here."
+                }
             }
         }
     }
