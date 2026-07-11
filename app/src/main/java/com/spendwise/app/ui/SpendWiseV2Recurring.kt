@@ -40,6 +40,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -83,6 +84,7 @@ import java.time.format.DateTimeFormatter
 
 private val ZONE_KL = ZoneId.of("Asia/Kuala_Lumpur")
 private val DUE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yyyy")
+private val FIRST_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE, d MMM yyyy")
 
 private fun formatRm(cents: Long): String =
     "RM ${formatRinggit(cents / 100L)}.${"%02d".format(cents % 100L)}"
@@ -369,7 +371,14 @@ private fun V2RecurringFormSheet(
                 ?: LocalDate.now(ZONE_KL).toString()
         )
     }
+    var datePickerOpen by remember(visible) { mutableStateOf(false) }
     var error by rememberSaveable(visible) { mutableStateOf<String?>(null) }
+
+    // firstDateInput is always written by the calendar picker, so this parse
+    // can only fail for a pre-picker draft — fall back to today.
+    val firstDate = remember(firstDateInput) {
+        runCatching { LocalDate.parse(firstDateInput) }.getOrElse { LocalDate.now(ZONE_KL) }
+    }
 
     AnimatedVisibility(
         visible = visible,
@@ -591,7 +600,7 @@ private fun V2RecurringFormSheet(
                     }
                 }
 
-                RecurringSectionLabel("First occurrence · YYYY-MM-DD")
+                RecurringSectionLabel("First occurrence")
                 Box(modifier = Modifier.padding(horizontal = 18.dp)) {
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
@@ -600,18 +609,33 @@ private fun V2RecurringFormSheet(
                         shadowElevation = 0.dp,
                         tonalElevation = 0.dp
                     ) {
-                        BasicTextField(
-                            value = firstDateInput,
-                            onValueChange = {
-                                firstDateInput = it
-                                error = null
-                            },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-                            textStyle = v2N(14.5f, FontWeight.SemiBold).copy(color = SwInk),
-                            cursorBrush = SolidColor(SwInk)
-                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .pressableNoIndication { datePickerOpen = true }
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.CalendarToday,
+                                contentDescription = null,
+                                tint = AppOnSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = firstDate.format(FIRST_FORMAT),
+                                color = SwInk,
+                                style = v2N(14.5f, FontWeight.SemiBold),
+                                modifier = Modifier.weight(1f)
+                            )
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = "Pick a date",
+                                tint = AppOnSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
                 Text(
@@ -677,6 +701,21 @@ private fun V2RecurringFormSheet(
             }
         }
     }
+
+    // Calendar picker — rendered after (so on top of) the form sheet. Same
+    // component the add-expense form uses; no entry dots here because a
+    // recurrence anchor doesn't care which days already have transactions.
+    V2DatePickerSheet(
+        visible = visible && datePickerOpen,
+        selectedDate = firstDate,
+        dayEntryCounts = emptyMap(),
+        onSelect = { picked ->
+            firstDateInput = picked.toString()
+            error = null
+            datePickerOpen = false
+        },
+        onDismiss = { datePickerOpen = false }
+    )
 }
 
 @Composable

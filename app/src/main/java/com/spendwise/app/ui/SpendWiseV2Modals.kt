@@ -1029,7 +1029,7 @@ private fun formatFriendlyDate(dateInput: String): String {
 // ═════════════════════════════════════════════════════════════════════════════
 
 @Composable
-private fun V2DatePickerSheet(
+internal fun V2DatePickerSheet(
     visible: Boolean,
     selectedDate: LocalDate,
     dayEntryCounts: Map<LocalDate, Int>,
