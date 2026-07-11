@@ -199,7 +199,44 @@ When you want to publish, say, version 1.5:
 
 ---
 
-## 8. Common problems
+## 8. Forked or cloned this repo? Make your own key
+
+The release keystore is **not** in this repository (that's deliberate — it's
+the app author's identity). If you fork SpendWise and want your own release
+builds, you create your own key once:
+
+```powershell
+keytool -genkeypair -v `
+  -keystore C:\somewhere-safe\my-release.jks `
+  -alias myapp -keyalg RSA -keysize 2048 -validity 10000
+```
+
+(`keytool` ships with any JDK — Android Studio's is at
+`C:\Program Files\Android\Android Studio\jbr\bin\keytool.exe`. It will ask
+you to invent a password and answer a few name questions; the answers just
+go into the certificate.)
+
+Then create `keystore.properties` in the project root:
+
+```properties
+storeFile=C:/somewhere-safe/my-release.jks
+storePassword=<the password you invented>
+keyAlias=myapp
+keyPassword=<the password you invented>
+```
+
+That's it — release builds now sign with *your* key. Two things to know:
+
+- Your build **cannot install as an update over** the original SpendWise
+  (different key — that's Android's anti-impersonation protection working).
+  If you're distributing a real fork, also change `applicationId` in
+  `app/build.gradle.kts` so the two apps can coexist on one phone.
+- Guard your keystore like the original author guards theirs: keep it out
+  of git, back it up, don't lose the password.
+
+---
+
+## 9. Common problems
 
 | Symptom | Cause & fix |
 |---|---|
