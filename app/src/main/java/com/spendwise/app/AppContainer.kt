@@ -22,7 +22,8 @@ class AppContainer(context: Context) {
         ExpenseDatabase.MIGRATION_3_4,
         ExpenseDatabase.MIGRATION_4_5,
         ExpenseDatabase.MIGRATION_5_6,
-        ExpenseDatabase.MIGRATION_6_7
+        ExpenseDatabase.MIGRATION_6_7,
+        ExpenseDatabase.MIGRATION_7_8
     ).build()
 
     val appearancePreferenceStore = AppearancePreferenceStore(appContext)
@@ -33,7 +34,8 @@ class AppContainer(context: Context) {
         categoryDao = database.categoryDao(),
         accountDao = database.accountDao(),
         budgetDao = database.budgetDao(),
-        recurringRuleDao = database.recurringRuleDao()
+        recurringRuleDao = database.recurringRuleDao(),
+        transferDao = database.transferDao()
     )
     val spendingAnalyzer = SpendingAnalyzer()
     val backupManager = BackupManager(
@@ -44,6 +46,7 @@ class AppContainer(context: Context) {
         accountDao = database.accountDao(),
         budgetDao = database.budgetDao(),
         recurringRuleDao = database.recurringRuleDao(),
+        transferDao = database.transferDao(),
         appearancePreferenceStore = appearancePreferenceStore
     )
 }

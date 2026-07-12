@@ -2,6 +2,18 @@
 
 All notable changes to SpendWise are documented here.
 
+## [Unreleased]
+
+### Added
+- **Transfers between accounts** — the add sheet gains a third mode next to
+  Expense and Income. A transfer moves money from one account to another
+  (bank withdrawal, e-wallet top-up, credit-card bill payment) in a single
+  atomic record: both balances update, but spending and income statistics
+  are untouched — moving your own money between pockets is not spending.
+  Transfers appear in the Activity timeline as neutral "From → To" rows,
+  open into a detail sheet, and can be deleted from there. Included in
+  backups; accounts with transfer history can't be archived.
+
 ## [1.4] — 2026-07-11
 
 ### Added

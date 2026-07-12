@@ -30,6 +30,7 @@ import com.spendwise.app.domain.MonthlyAggregate
 import com.spendwise.app.domain.RangeStats
 import com.spendwise.app.domain.RecurrenceCadence
 import com.spendwise.app.domain.RecurringRule
+import com.spendwise.app.domain.Transfer
 import com.spendwise.app.export.BackupManager
 import com.spendwise.app.export.BackupResult
 import java.time.LocalDate
@@ -414,6 +415,77 @@ class ExpenseTrackerViewModel(
     fun deleteExpense(id: Long) {
         viewModelScope.launch {
             expenseRepository.deleteExpense(id)
+        }
+    }
+
+    // ── Transfers ────────────────────────────────────────────────────────
+
+    /** The selected month's transfers — interleaved into the Activity timeline. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val selectedMonthTransfers: StateFlow<List<Transfer>> = _selectedMonth
+        .flatMapLatest { month ->
+            expenseRepository.transfersInRange(
+                month.startMillis(),
+                month.plusMonths(1).startMillis()
+            )
+        }
+        .flowOn(Dispatchers.Default)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList()
+        )
+
+    /**
+     * Save a transfer. Same contract as [saveExpense]: false + [formError]
+     * on validation failure, true when the write was dispatched.
+     */
+    fun saveTransfer(
+        id: Long?,
+        amountInput: String,
+        fromAccountId: Long?,
+        toAccountId: Long?,
+        notes: String,
+        dateInput: String
+    ): Boolean {
+        val amountCents = MoneyFormatter.parseToCents(amountInput)
+        if (amountCents == null) {
+            formError.value = "Enter an amount above RM 0.00."
+            return false
+        }
+        if (fromAccountId == null || toAccountId == null) {
+            formError.value = "Choose both accounts."
+            return false
+        }
+        if (fromAccountId == toAccountId) {
+            formError.value = "Pick two different accounts."
+            return false
+        }
+        val occurredAtMillis = runCatching {
+            LocalDate.parse(dateInput).atStartOfDay(zoneId).toInstant().toEpochMilli()
+        }.getOrNull()
+        if (occurredAtMillis == null) {
+            formError.value = "Use date format YYYY-MM-DD."
+            return false
+        }
+        formError.value = null
+
+        viewModelScope.launch {
+            expenseRepository.saveTransfer(
+                id = id,
+                fromAccountId = fromAccountId,
+                toAccountId = toAccountId,
+                amountCents = amountCents,
+                notes = notes,
+                occurredAtMillis = occurredAtMillis
+            )
+        }
+        return true
+    }
+
+    fun deleteTransfer(id: Long) {
+        viewModelScope.launch {
+            expenseRepository.deleteTransfer(id)
         }
     }
 

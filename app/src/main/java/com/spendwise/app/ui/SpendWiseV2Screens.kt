@@ -855,7 +855,11 @@ internal fun V2ActivityScreen(
     onSelectCategory: (Long?) -> Unit,
     onBack: () -> Unit,
     onSeeBreakdown: () -> Unit,
-    onOpenTx: (Long) -> Unit
+    onOpenTx: (Long) -> Unit,
+    // Month-scoped transfers, interleaved into the day groups. Neutral rows:
+    // they never contribute to day/month spend totals.
+    transfers: List<com.spendwise.app.domain.Transfer> = emptyList(),
+    onOpenTransfer: (Long) -> Unit = {}
 ) {
     var filter by rememberSaveable { mutableStateOf(V2Filter.All) }
     // Search mode — magnifying-glass icon flips the header into a text input
@@ -931,16 +935,46 @@ internal fun V2ActivityScreen(
     val accountNamesById = remember(state.accounts) {
         state.accounts.associate { it.id to it.name }
     }
-    val activityGroups = remember(filteredExpenses, incomeIds) {
-        filteredExpenses
-            .groupBy {
-                Instant.ofEpochMilli(it.occurredAtMillis).atZone(ZONE_KL).toLocalDate()
-            }
-            .toSortedMap(compareByDescending { it })
-            .map { (date, rows) ->
+    // Transfers respect the account filter (either endpoint matches) and
+    // search, but hide under Expense/Income/category filters — a transfer is
+    // neither, and has no category.
+    val filteredTransfers = remember(transfers, filter, selectedAccountId, selectedCategoryId, searchKey) {
+        if (filter != V2Filter.All || selectedCategoryId != null) {
+            emptyList()
+        } else {
+            transfers.asSequence()
+                .filter { t ->
+                    val aid = selectedAccountId
+                    aid == null || t.fromAccountId == aid || t.toAccountId == aid
+                }
+                .filter { t ->
+                    if (searchKey.isBlank()) true
+                    else t.notes.lowercase().contains(searchKey) ||
+                        t.fromAccountName.lowercase().contains(searchKey) ||
+                        t.toAccountName.lowercase().contains(searchKey) ||
+                        "transfer".contains(searchKey)
+                }
+                .sortedByDescending { it.occurredAtMillis }
+                .toList()
+        }
+    }
+    val activityGroups = remember(filteredExpenses, filteredTransfers, incomeIds) {
+        val expensesByDate = filteredExpenses.groupBy {
+            Instant.ofEpochMilli(it.occurredAtMillis).atZone(ZONE_KL).toLocalDate()
+        }
+        val transfersByDate = filteredTransfers.groupBy {
+            Instant.ofEpochMilli(it.occurredAtMillis).atZone(ZONE_KL).toLocalDate()
+        }
+        (expensesByDate.keys + transfersByDate.keys)
+            .sortedDescending()
+            .map { date ->
+                val rows = expensesByDate[date].orEmpty()
                 V2ActivityDayGroup(
                     date = date,
                     rows = rows,
+                    transfers = transfersByDate[date].orEmpty(),
+                    // Day spend deliberately excludes transfers — moving money
+                    // between pockets isn't spending.
                     spendCents = rows.asSequence()
                         .filter { it.categoryId !in incomeIds }
                         .sumOf { it.amountCents }
@@ -1240,7 +1274,7 @@ internal fun V2ActivityScreen(
                 )
             }
         }
-        if (filteredExpenses.isEmpty()) {
+        if (activityGroups.isEmpty()) {
             item {
                 Box(
                     modifier = Modifier
@@ -1311,6 +1345,20 @@ internal fun V2ActivityScreen(
                                         onClick = { onOpenTx(exp.id) }
                                     )
                                 }
+                                group.transfers.forEachIndexed { i, t ->
+                                    if (rows.isNotEmpty() || i > 0) {
+                                        Box(
+                                            Modifier
+                                                .fillMaxWidth()
+                                                .height(1.dp)
+                                                .background(v2Hairline())
+                                        )
+                                    }
+                                    V2TransferRow(
+                                        transfer = t,
+                                        onClick = { onOpenTransfer(t.id) }
+                                    )
+                                }
                             }
                         }
                     }
@@ -1325,6 +1373,7 @@ internal fun V2ActivityScreen(
 private data class V2ActivityDayGroup(
     val date: LocalDate,
     val rows: List<Expense>,
+    val transfers: List<com.spendwise.app.domain.Transfer>,
     val spendCents: Long
 )
 

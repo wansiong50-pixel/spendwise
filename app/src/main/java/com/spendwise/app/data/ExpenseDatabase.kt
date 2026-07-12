@@ -11,9 +11,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CategoryEntity::class,
         BudgetEntity::class,
         AccountEntity::class,
-        RecurringRuleEntity::class
+        RecurringRuleEntity::class,
+        TransferEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class ExpenseDatabase : RoomDatabase() {
@@ -22,6 +23,7 @@ abstract class ExpenseDatabase : RoomDatabase() {
     abstract fun accountDao(): AccountDao
     abstract fun budgetDao(): BudgetDao
     abstract fun recurringRuleDao(): RecurringRuleDao
+    abstract fun transferDao(): TransferDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -213,6 +215,37 @@ abstract class ExpenseDatabase : RoomDatabase() {
                 )
                 database.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_recurring_rules_accountId` ON `recurring_rules` (`accountId`)"
+                )
+            }
+        }
+
+        // Transfers between the user's own accounts. Shapes must match
+        // TransferEntity exactly for Room's open-time validator.
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `transfers` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `fromAccountId` INTEGER NOT NULL,
+                        `toAccountId` INTEGER NOT NULL,
+                        `amountCents` INTEGER NOT NULL,
+                        `notes` TEXT NOT NULL,
+                        `occurredAtMillis` INTEGER NOT NULL,
+                        `createdAtMillis` INTEGER NOT NULL,
+                        FOREIGN KEY(`fromAccountId`) REFERENCES `accounts`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT,
+                        FOREIGN KEY(`toAccountId`) REFERENCES `accounts`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_transfers_fromAccountId` ON `transfers` (`fromAccountId`)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_transfers_toAccountId` ON `transfers` (`toAccountId`)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_transfers_occurredAtMillis` ON `transfers` (`occurredAtMillis`)"
                 )
             }
         }

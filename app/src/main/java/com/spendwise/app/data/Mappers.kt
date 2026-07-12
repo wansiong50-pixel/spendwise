@@ -6,6 +6,7 @@ import com.spendwise.app.domain.Category
 import com.spendwise.app.domain.Expense
 import com.spendwise.app.domain.RecurrenceCadence
 import com.spendwise.app.domain.RecurringRule
+import com.spendwise.app.domain.Transfer
 
 fun CategoryEntity.toDomain(): Category {
     return Category(
@@ -31,6 +32,20 @@ fun ExpenseEntity.toDomain(category: CategoryEntity?): Expense {
         createdAtMillis = createdAtMillis,
         categoryIconName = category?.iconName.orEmpty(),
         categoryColor = category?.color
+    )
+}
+
+fun TransferEntity.toDomain(fromAccount: AccountEntity?, toAccount: AccountEntity?): Transfer {
+    return Transfer(
+        id = id,
+        fromAccountId = fromAccountId,
+        fromAccountName = fromAccount?.name ?: "Account",
+        toAccountId = toAccountId,
+        toAccountName = toAccount?.name ?: "Account",
+        amountCents = amountCents,
+        notes = notes,
+        occurredAtMillis = occurredAtMillis,
+        createdAtMillis = createdAtMillis
     )
 }
 

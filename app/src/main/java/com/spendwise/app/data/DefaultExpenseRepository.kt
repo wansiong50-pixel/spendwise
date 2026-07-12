@@ -12,6 +12,7 @@ import com.spendwise.app.domain.RangeStats
 import com.spendwise.app.domain.RecurrenceCadence
 import com.spendwise.app.domain.RecurrenceSchedule
 import com.spendwise.app.domain.RecurringRule
+import com.spendwise.app.domain.Transfer
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
@@ -26,7 +27,8 @@ class DefaultExpenseRepository(
     private val categoryDao: CategoryDao,
     private val accountDao: AccountDao,
     private val budgetDao: BudgetDao,
-    private val recurringRuleDao: RecurringRuleDao
+    private val recurringRuleDao: RecurringRuleDao,
+    private val transferDao: TransferDao
 ) : ExpenseRepository {
     override val categories: Flow<List<Category>> = categoryDao
         .observeCategories()
@@ -100,33 +102,40 @@ class DefaultExpenseRepository(
 
     override val accounts: Flow<List<Account>> = combine(
         accountDao.observeAccounts(),
-        expenseDao.observeAccountDeltas()
-    ) { accountEntities, deltas ->
-        accountsWithBalances(accountEntities, deltas)
+        expenseDao.observeAccountDeltas(),
+        transferDao.observeAccountTransferDeltas()
+    ) { accountEntities, expenseDeltas, transferDeltas ->
+        accountsWithBalances(accountEntities, expenseDeltas, transferDeltas)
     }
 
     override val archivedAccounts: Flow<List<Account>> = combine(
         accountDao.observeArchivedAccounts(),
-        expenseDao.observeAccountDeltas()
-    ) { accountEntities, deltas ->
-        accountsWithBalances(accountEntities, deltas)
+        expenseDao.observeAccountDeltas(),
+        transferDao.observeAccountTransferDeltas()
+    ) { accountEntities, expenseDeltas, transferDeltas ->
+        accountsWithBalances(accountEntities, expenseDeltas, transferDeltas)
     }
 
     /**
      * Per-account current balance =
-     *   startingBalance + Σ income on this account − Σ expense on this account
+     *   startingBalance
+     *     + Σ income − Σ expense on this account
+     *     + Σ transfers in − Σ transfers out
      *
-     * The signed delta is aggregated in SQL (one row per account) so balance
-     * recomputation never materializes expense rows, no matter how large the
-     * ledger grows.
+     * Both signed deltas are aggregated in SQL (one row per account) so
+     * balance recomputation never materializes transaction rows, no matter
+     * how large the ledger grows.
      */
     private fun accountsWithBalances(
         accountEntities: List<AccountEntity>,
-        deltas: List<AccountDeltaRow>
+        expenseDeltas: List<AccountDeltaRow>,
+        transferDeltas: List<AccountDeltaRow>
     ): List<Account> {
-        val signedDeltaByAccount = deltas.associate { it.accountId to it.deltaCents }
+        val expenseDeltaByAccount = expenseDeltas.associate { it.accountId to it.deltaCents }
+        val transferDeltaByAccount = transferDeltas.associate { it.accountId to it.deltaCents }
         return accountEntities.map { entity ->
-            val delta = signedDeltaByAccount[entity.id] ?: 0L
+            val delta = (expenseDeltaByAccount[entity.id] ?: 0L) +
+                (transferDeltaByAccount[entity.id] ?: 0L)
             entity.toDomain(currentBalanceCents = entity.startingBalanceCents + delta)
         }
     }
@@ -333,7 +342,9 @@ class DefaultExpenseRepository(
     }
 
     override suspend fun archiveAccount(id: Long): ArchiveAccountResult {
-        val count = accountDao.transactionCountForAccount(id)
+        // Transfers count as transactions for archiving purposes — hiding an
+        // account that the timeline still references would strand history.
+        val count = accountDao.transactionCountForAccount(id) + transferDao.countForAccount(id)
         if (count > 0) return ArchiveAccountResult.Blocked(transactionCount = count)
         // A rule pointing at an archived account would keep materializing
         // expenses into a surface excluded from the dashboard total — block
@@ -361,6 +372,54 @@ class DefaultExpenseRepository(
 
     override suspend fun deleteCategoryBudget(categoryId: Long) {
         budgetDao.deleteForCategory(categoryId)
+    }
+
+    // ── Transfers ────────────────────────────────────────────────────────
+
+    override fun transfersInRange(startMillis: Long, endMillis: Long): Flow<List<Transfer>> =
+        combine(
+            transferDao.observeTransfersInRange(startMillis, endMillis),
+            accountDao.observeAllAccounts()
+        ) { transferEntities, accountEntities ->
+            val accountById = accountEntities.associateBy { it.id }
+            transferEntities.map {
+                it.toDomain(accountById[it.fromAccountId], accountById[it.toAccountId])
+            }
+        }
+
+    override suspend fun saveTransfer(
+        id: Long?,
+        fromAccountId: Long,
+        toAccountId: Long,
+        amountCents: Long,
+        notes: String,
+        occurredAtMillis: Long
+    ) {
+        // Same created-at preservation as saveExpense: edits keep the
+        // original creation timestamp instead of looking like new entries.
+        val createdAtMillis = if (id != null) {
+            transferDao.byId(id)?.createdAtMillis ?: System.currentTimeMillis()
+        } else {
+            System.currentTimeMillis()
+        }
+        val entity = TransferEntity(
+            id = id ?: 0L,
+            fromAccountId = fromAccountId,
+            toAccountId = toAccountId,
+            amountCents = amountCents,
+            notes = notes.trim(),
+            occurredAtMillis = occurredAtMillis,
+            createdAtMillis = createdAtMillis
+        )
+        if (id == null) {
+            transferDao.insert(entity)
+        } else {
+            transferDao.update(entity)
+        }
+    }
+
+    override suspend fun deleteTransfer(id: Long) {
+        transferDao.deleteById(id)
     }
 
     // ── Recurring transactions ───────────────────────────────────────────

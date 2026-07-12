@@ -103,6 +103,24 @@ data class RangeStats(
 )
 
 /**
+ * Money moved between two of the user's own accounts. Excluded from every
+ * spending/income statistic by construction — only account balances and the
+ * activity timeline see it. [fromAccountName]/[toAccountName] are joined in
+ * by the repository for display, mirroring [Expense.categoryName].
+ */
+data class Transfer(
+    val id: Long,
+    val fromAccountId: Long,
+    val fromAccountName: String,
+    val toAccountId: Long,
+    val toAccountName: String,
+    val amountCents: Long,
+    val notes: String,
+    val occurredAtMillis: Long,
+    val createdAtMillis: Long
+)
+
+/**
  * How often a recurring rule fires. Stored as a string key (same pattern as
  * [AccountType]) so adding a cadence never needs a schema migration; unknown
  * stored values fall back to [Monthly] in the mapper.

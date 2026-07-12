@@ -15,6 +15,8 @@ import com.spendwise.app.data.ExpenseDatabase
 import com.spendwise.app.data.ExpenseEntity
 import com.spendwise.app.data.RecurringRuleDao
 import com.spendwise.app.data.RecurringRuleEntity
+import com.spendwise.app.data.TransferDao
+import com.spendwise.app.data.TransferEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -34,7 +36,7 @@ sealed interface BackupResult {
 // on it if needed. Kept as a const here (rather than reading from the
 // database) because it's part of the static contract for backups produced by
 // this build.
-private const val APP_DB_VERSION_AT_EXPORT: Int = 7
+private const val APP_DB_VERSION_AT_EXPORT: Int = 8
 
 class BackupManager(
     private val context: Context,
@@ -44,6 +46,7 @@ class BackupManager(
     private val accountDao: AccountDao,
     private val budgetDao: BudgetDao,
     private val recurringRuleDao: RecurringRuleDao,
+    private val transferDao: TransferDao,
     private val appearancePreferenceStore: AppearancePreferenceStore
 ) {
     // prettyPrint makes the file inspectable by a curious user opening it in
@@ -62,6 +65,7 @@ class BackupManager(
             val budgets = budgetDao.allOnce()
             val expenses = expenseDao.allOnce()
             val recurringRules = recurringRuleDao.allOnce()
+            val transfers = transferDao.allOnce()
             val darkMode = appearancePreferenceStore.startupDarkModePreference.first()
 
             val envelope = BackupEnvelope(
@@ -72,7 +76,8 @@ class BackupManager(
                 accounts = accounts.map { it.toBackup() },
                 budgets = budgets.map { it.toBackup() },
                 expenses = expenses.map { it.toBackup() },
-                recurringRules = recurringRules.map { it.toBackup() }
+                recurringRules = recurringRules.map { it.toBackup() },
+                transfers = transfers.map { it.toBackup() }
             )
 
             val payload = json.encodeToString(BackupEnvelope.serializer(), envelope)
@@ -113,6 +118,7 @@ class BackupManager(
             // user's current data is preserved if the import explodes
             // midway.
             database.withTransaction {
+                transferDao.deleteAll()
                 recurringRuleDao.deleteAll()
                 expenseDao.deleteAll()
                 budgetDao.deleteAll()
@@ -124,6 +130,7 @@ class BackupManager(
                 budgetDao.insertAll(envelope.budgets.map { it.toEntity() })
                 expenseDao.insertAll(envelope.expenses.map { it.toEntity() })
                 recurringRuleDao.insertAll(envelope.recurringRules.map { it.toEntity() })
+                transferDao.insertAll(envelope.transfers.map { it.toEntity() })
             }
 
             // DataStore lives outside the Room DB transaction, so we apply
@@ -208,6 +215,26 @@ private fun BackupExpense.toEntity() = ExpenseEntity(
     categoryId = categoryId,
     accountId = accountId,
     merchant = merchant,
+    notes = notes,
+    occurredAtMillis = occurredAtMillis,
+    createdAtMillis = createdAtMillis
+)
+
+private fun TransferEntity.toBackup() = BackupTransfer(
+    id = id,
+    fromAccountId = fromAccountId,
+    toAccountId = toAccountId,
+    amountCents = amountCents,
+    notes = notes,
+    occurredAtMillis = occurredAtMillis,
+    createdAtMillis = createdAtMillis
+)
+
+private fun BackupTransfer.toEntity() = TransferEntity(
+    id = id,
+    fromAccountId = fromAccountId,
+    toAccountId = toAccountId,
+    amountCents = amountCents,
     notes = notes,
     occurredAtMillis = occurredAtMillis,
     createdAtMillis = createdAtMillis

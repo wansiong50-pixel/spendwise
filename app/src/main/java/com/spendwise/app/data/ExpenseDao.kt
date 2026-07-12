@@ -347,6 +347,61 @@ interface RecurringRuleDao {
 }
 
 @Dao
+interface TransferDao {
+    // Month/range-scoped like expenses — the Activity timeline only ever
+    // renders one window at a time.
+    @Query(
+        """
+        SELECT * FROM transfers
+        WHERE occurredAtMillis >= :startMillis AND occurredAtMillis < :endMillis
+        ORDER BY occurredAtMillis DESC, id DESC
+        """
+    )
+    fun observeTransfersInRange(startMillis: Long, endMillis: Long): Flow<List<TransferEntity>>
+
+    // Signed per-account transfer delta (money in minus money out), the
+    // second ingredient of derived balances next to the expense/income delta.
+    @Query(
+        """
+        SELECT accountId, SUM(delta) AS deltaCents FROM (
+            SELECT toAccountId AS accountId, amountCents AS delta FROM transfers
+            UNION ALL
+            SELECT fromAccountId AS accountId, -amountCents AS delta FROM transfers
+        )
+        GROUP BY accountId
+        """
+    )
+    fun observeAccountTransferDeltas(): Flow<List<AccountDeltaRow>>
+
+    @Query("SELECT * FROM transfers WHERE id = :id LIMIT 1")
+    suspend fun byId(id: Long): TransferEntity?
+
+    @Insert
+    suspend fun insert(transfer: TransferEntity): Long
+
+    @Update
+    suspend fun update(transfer: TransferEntity)
+
+    @Query("DELETE FROM transfers WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    // Archive guard: an account with transfer history must stay visible or
+    // the timeline would reference a hidden surface.
+    @Query("SELECT COUNT(*) FROM transfers WHERE fromAccountId = :accountId OR toAccountId = :accountId")
+    suspend fun countForAccount(accountId: Long): Int
+
+    // Backup/restore helpers.
+    @Query("SELECT * FROM transfers")
+    suspend fun allOnce(): List<TransferEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(transfers: List<TransferEntity>)
+
+    @Query("DELETE FROM transfers")
+    suspend fun deleteAll()
+}
+
+@Dao
 interface BudgetDao {
     @Query("SELECT * FROM budgets")
     fun observeBudgets(): Flow<List<BudgetEntity>>

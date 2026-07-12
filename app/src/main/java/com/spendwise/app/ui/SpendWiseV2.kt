@@ -378,6 +378,9 @@ fun ExpenseTrackerApp(
     // bottom nav, and hide it. Wrapping in Dialog caused layout-vs-window
     // sizing issues that clipped the action row.
     var openedTxId by rememberSaveable { mutableStateOf<Long?>(null) }
+    // Transfer detail sheet — same hoisting rationale as openedTxId.
+    var openedTransferId by rememberSaveable { mutableStateOf<Long?>(null) }
+    val selectedMonthTransfers by viewModel.selectedMonthTransfers.collectAsStateWithLifecycle()
     // Insights 3-dot menu — hoisted so the shell can blur + dim the bottom
     // nav (which lives here, not in V2InsightsScreen) while the popover is
     // open. Page-level blur stays inside V2InsightsScreen.
@@ -540,7 +543,9 @@ fun ExpenseTrackerApp(
                         onSelectCategory = { selectedCategoryId = it },
                         onBack = { navigateToPeerTab(V2Tab.Home) },
                         onSeeBreakdown = { navigateToPeerTab(V2Tab.Insights) },
-                        onOpenTx = { id -> openedTxId = id }
+                        onOpenTx = { id -> openedTxId = id },
+                        transfers = selectedMonthTransfers,
+                        onOpenTransfer = { id -> openedTransferId = id }
                     )
                 }
                 composable(V2Tab.Insights.route) {
@@ -594,6 +599,9 @@ fun ExpenseTrackerApp(
                         formError = formError,
                         initialIncome = initialIncome,
                         onSave = viewModel::saveExpense,
+                        onSaveTransfer = { amount, fromId, toId, notes, date ->
+                            viewModel.saveTransfer(null, amount, fromId, toId, notes, date)
+                        },
                         onCreateCategory = viewModel::createCategory,
                         onClose = { navController.popBackStack() }
                     )
@@ -658,7 +666,7 @@ fun ExpenseTrackerApp(
                 }
             }
 
-            val hideBottomNav = accountPickerOpen || categoryPickerOpen || monthPickerOpen || customRangeOpen || settingsOpen || yearPickerOpen || restoreConfirmOpen || (openedTxId != null)
+            val hideBottomNav = accountPickerOpen || categoryPickerOpen || monthPickerOpen || customRangeOpen || settingsOpen || yearPickerOpen || restoreConfirmOpen || (openedTxId != null) || (openedTransferId != null)
             // Blur + dim the bottom nav when the Insights 3-dot popover is
             // open, so it joins the page in receding behind the menu rather
             // than competing with it.
@@ -710,6 +718,22 @@ fun ExpenseTrackerApp(
                     viewModel.deleteExpense(id)
                 },
                 onDismiss = { openedTxId = null }
+            )
+
+            // Transfer detail sheet — same re-resolve pattern as openedTx.
+            val openedTransfer = openedTransferId?.let { id ->
+                selectedMonthTransfers.find { it.id == id }
+            }
+            LaunchedEffect(openedTransferId, openedTransfer) {
+                if (openedTransferId != null && openedTransfer == null) openedTransferId = null
+            }
+            V2TransferDetailSheet(
+                transfer = openedTransfer,
+                onDelete = { id ->
+                    openedTransferId = null
+                    viewModel.deleteTransfer(id)
+                },
+                onDismiss = { openedTransferId = null }
             )
 
             // Account & category picker sheets — rendered after the bottom

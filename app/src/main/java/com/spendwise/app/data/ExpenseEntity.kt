@@ -145,6 +145,48 @@ data class RecurringRuleEntity(
     val createdAtMillis: Long
 )
 
+/**
+ * Money moved between two of the user's own accounts — a bank withdrawal, a
+ * credit-card bill payment, topping up an e-wallet. One atomic row (never a
+ * linked expense/income pair, which could desync under edits).
+ *
+ * Deliberately its own table rather than a flavor of [ExpenseEntity]: every
+ * analytics query (spent/earned totals, heatmap, category stats, budgets,
+ * CSV export) reads `expenses`, so transfers are excluded from all of them
+ * by construction — moving your own money between pockets is not spending.
+ * Only derived account balances read this table.
+ *
+ * FKs RESTRICT like expenses'; accounts can't be deleted, and the archive
+ * flow blocks while transfers reference the account.
+ */
+@Entity(
+    tableName = "transfers",
+    foreignKeys = [
+        ForeignKey(
+            entity = AccountEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["fromAccountId"],
+            onDelete = ForeignKey.RESTRICT
+        ),
+        ForeignKey(
+            entity = AccountEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["toAccountId"],
+            onDelete = ForeignKey.RESTRICT
+        )
+    ],
+    indices = [Index("fromAccountId"), Index("toAccountId"), Index("occurredAtMillis")]
+)
+data class TransferEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val fromAccountId: Long,
+    val toAccountId: Long,
+    val amountCents: Long,
+    val notes: String,
+    val occurredAtMillis: Long,
+    val createdAtMillis: Long
+)
+
 fun BudgetEntity.toDomain(): com.spendwise.app.domain.Budget {
     return com.spendwise.app.domain.Budget(
         id = id,

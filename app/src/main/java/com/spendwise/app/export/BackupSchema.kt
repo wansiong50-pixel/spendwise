@@ -25,7 +25,9 @@ data class BackupEnvelope(
     @SerialName("budgets") val budgets: List<BackupBudget> = emptyList(),
     @SerialName("expenses") val expenses: List<BackupExpense> = emptyList(),
     // Added in app 1.4 (db v7). Defaulted so pre-1.4 backups still load.
-    @SerialName("recurringRules") val recurringRules: List<BackupRecurringRule> = emptyList()
+    @SerialName("recurringRules") val recurringRules: List<BackupRecurringRule> = emptyList(),
+    // Added in app 1.5 (db v8). Defaulted so pre-1.5 backups still load.
+    @SerialName("transfers") val transfers: List<BackupTransfer> = emptyList()
 )
 
 @Serializable
@@ -69,6 +71,17 @@ data class BackupRecurringRule(
     val anchorEpochDay: Long,
     val nextDueEpochDay: Long,
     val isPaused: Boolean = false,
+    val createdAtMillis: Long
+)
+
+@Serializable
+data class BackupTransfer(
+    val id: Long,
+    val fromAccountId: Long,
+    val toAccountId: Long,
+    val amountCents: Long,
+    val notes: String,
+    val occurredAtMillis: Long,
     val createdAtMillis: Long
 )
 

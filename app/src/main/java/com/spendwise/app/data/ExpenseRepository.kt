@@ -10,6 +10,7 @@ import com.spendwise.app.domain.MonthlyAggregate
 import com.spendwise.app.domain.RangeStats
 import com.spendwise.app.domain.RecurrenceCadence
 import com.spendwise.app.domain.RecurringRule
+import com.spendwise.app.domain.Transfer
 import java.time.LocalDate
 import kotlinx.coroutines.flow.Flow
 
@@ -194,6 +195,27 @@ interface ExpenseRepository {
 
     suspend fun saveCategoryBudget(categoryId: Long, limitCents: Long)
     suspend fun deleteCategoryBudget(categoryId: Long)
+
+    // ── Transfers ────────────────────────────────────────────────────────
+
+    /**
+     * Transfers whose occurrence falls in `[startMillis, endMillis)`, with
+     * account names joined for display. Affects derived balances and the
+     * activity timeline only — never spending/income statistics.
+     */
+    fun transfersInRange(startMillis: Long, endMillis: Long): Flow<List<Transfer>>
+
+    /** Create ([id] == null) or update a transfer. Caller validates from ≠ to. */
+    suspend fun saveTransfer(
+        id: Long?,
+        fromAccountId: Long,
+        toAccountId: Long,
+        amountCents: Long,
+        notes: String,
+        occurredAtMillis: Long
+    )
+
+    suspend fun deleteTransfer(id: Long)
 
     // ── Recurring transactions ───────────────────────────────────────────
 

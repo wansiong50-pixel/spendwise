@@ -207,6 +207,15 @@ internal fun V2AddExpenseSheet(
         notes: String,
         dateInput: String
     ) -> Boolean,
+    // Transfer mode: move money between two accounts. Create-only from this
+    // sheet (transfers are deleted from their detail sheet, not edited).
+    onSaveTransfer: (
+        amountInput: String,
+        fromAccountId: Long?,
+        toAccountId: Long?,
+        notes: String,
+        dateInput: String
+    ) -> Boolean,
     onCreateCategory: (
         nameInput: String,
         iconName: String,
@@ -221,6 +230,15 @@ internal fun V2AddExpenseSheet(
     val incomeCategories = categories.filter { it.isIncomeAdjustment }
     val existingIsIncome = existing != null && incomeCategories.any { it.id == existing.categoryId }
     var income by rememberSaveable(existing?.id) { mutableStateOf(if (isEdit) existingIsIncome else initialIncome) }
+    // Third mode next to expense/income. Only reachable when creating —
+    // editing an expense never morphs it into a transfer.
+    var transferMode by rememberSaveable(existing?.id) { mutableStateOf(false) }
+    var fromAccountId by rememberSaveable(existing?.id) {
+        mutableStateOf(accounts.firstOrNull()?.id)
+    }
+    var toAccountId by rememberSaveable(existing?.id) {
+        mutableStateOf(accounts.getOrNull(1)?.id)
+    }
 
     var amountInput by rememberSaveable(existing?.id) {
         mutableStateOf(
@@ -360,8 +378,11 @@ internal fun V2AddExpenseSheet(
                     bg = if (isDark) AppSurfaceLow else null
                 )
                 Text(
-                    text = if (isEdit) "Edit ${if (income) "income" else "expense"}"
-                    else "Add ${if (income) "income" else "expense"}",
+                    text = when {
+                        isEdit -> "Edit ${if (income) "income" else "expense"}"
+                        transferMode -> "Add transfer"
+                        else -> "Add ${if (income) "income" else "expense"}"
+                    },
                     color = SwInk,
                     style = v2T(15f, FontWeight.Bold)
                 )
@@ -378,8 +399,18 @@ internal fun V2AddExpenseSheet(
                             .padding(4.dp),
                         horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        V2SheetSeg("Expense", !income, Modifier.weight(1f)) { income = false }
-                        V2SheetSeg("Income", income, Modifier.weight(1f)) { income = true }
+                        V2SheetSeg("Expense", !income && !transferMode, Modifier.weight(1f)) {
+                            income = false
+                            transferMode = false
+                        }
+                        V2SheetSeg("Income", income && !transferMode, Modifier.weight(1f)) {
+                            income = true
+                            transferMode = false
+                        }
+                        V2SheetSeg("Transfer", transferMode, Modifier.weight(1f)) {
+                            income = false
+                            transferMode = true
+                        }
                     }
                 }
             }
@@ -418,6 +449,50 @@ internal fun V2AddExpenseSheet(
                     onClick = { datePickerOpen = true }
                 )
             }
+            if (transferMode) {
+                // Transfer: no category, no merchant — just the two pockets
+                // the money moves between.
+                V2SheetSectionLabel("From account")
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(start = 14.dp, end = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    accounts.forEach { account ->
+                        val vis = visualForAccount(account)
+                        V2AccountPill(
+                            name = account.name,
+                            icon = vis.icon,
+                            color = vis.color,
+                            selected = fromAccountId == account.id,
+                            needsLightIcon = account.type == AccountType.Credit,
+                            onClick = { fromAccountId = account.id }
+                        )
+                    }
+                }
+                V2SheetSectionLabel("To account")
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(start = 14.dp, end = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    accounts.forEach { account ->
+                        val vis = visualForAccount(account)
+                        V2AccountPill(
+                            name = account.name,
+                            icon = vis.icon,
+                            color = vis.color,
+                            selected = toAccountId == account.id,
+                            needsLightIcon = account.type == AccountType.Credit,
+                            onClick = { toAccountId = account.id }
+                        )
+                    }
+                }
+            } else {
             // Category
             V2SheetSectionLabel("Category")
             Row(
@@ -477,6 +552,7 @@ internal fun V2AddExpenseSheet(
                     onSelect = { merchant = it }
                 )
             }
+            }
             // Notes
             V2SheetSectionLabel("Notes · optional")
             Box(modifier = Modifier.padding(horizontal = 18.dp)) {
@@ -512,15 +588,19 @@ internal fun V2AddExpenseSheet(
                             ) else it
                         }
                         .pressableNoIndication(scale = 0.97f) {
-                            val ok = onSave(
-                                existing?.id,
-                                amountInput,
-                                selectedCategoryId,
-                                selectedAccountId,
-                                merchant,
-                                notes,
-                                dateInput
-                            )
+                            val ok = if (transferMode) {
+                                onSaveTransfer(amountInput, fromAccountId, toAccountId, notes, dateInput)
+                            } else {
+                                onSave(
+                                    existing?.id,
+                                    amountInput,
+                                    selectedCategoryId,
+                                    selectedAccountId,
+                                    merchant,
+                                    notes,
+                                    dateInput
+                                )
+                            }
                             if (ok) {
                                 // Physical "it landed" tick — the save is the
                                 // one moment worth a definite haptic.
@@ -539,7 +619,11 @@ internal fun V2AddExpenseSheet(
                         Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = if (isEdit) "Save changes" else "Save ${if (income) "income" else "expense"}",
+                            text = when {
+                                isEdit -> "Save changes"
+                                transferMode -> "Save transfer"
+                                else -> "Save ${if (income) "income" else "expense"}"
+                            },
                             color = Color.White,
                             style = v2T(15f, FontWeight.Bold)
                         )
