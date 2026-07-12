@@ -105,6 +105,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -1476,30 +1479,67 @@ internal fun V2Amount(
         displayedCents < 0 -> '−'
         else -> null
     }
-    Row(modifier = modifier, verticalAlignment = Alignment.Bottom) {
-        if (displaySign != null) {
-            Text(
-                text = "$displaySign ",
-                color = color,
-                style = v2NumStyle(size, weight)
-            )
+    // A money figure must never wrap or truncate — "15," over "000" reads as
+    // two different numbers, and clipped digits are worse. Measure the row at
+    // its natural width; when the container is narrower (large user font
+    // scale × longer figure × fixed-width neighbors like sparklines), shrink
+    // the whole figure uniformly to fit. Every amount in the app renders
+    // through here, so this guards all surfaces at once.
+    SubcomposeLayout(modifier = modifier) { constraints ->
+        val content = subcompose(Unit) {
+            Row(verticalAlignment = Alignment.Bottom) {
+                if (displaySign != null) {
+                    Text(
+                        text = "$displaySign ",
+                        color = color,
+                        maxLines = 1,
+                        softWrap = false,
+                        style = v2NumStyle(size, weight)
+                    )
+                }
+                Text(
+                    text = "RM",
+                    color = color.copy(alpha = 0.5f),
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.padding(
+                        end = (size * 0.18f).dp,
+                        bottom = (size * 0.12f).dp
+                    ),
+                    style = v2NumStyle(size * 0.55f, FontWeight.Medium)
+                )
+                Text(
+                    text = intStr,
+                    color = color,
+                    maxLines = 1,
+                    softWrap = false,
+                    style = v2NumStyle(size, weight)
+                )
+                if (showDecimals) {
+                    Text(
+                        text = ".%02d".format(sub),
+                        color = color.copy(alpha = 0.5f),
+                        maxLines = 1,
+                        softWrap = false,
+                        style = v2NumStyle(size, weight)
+                    )
+                }
+            }
+        }.first().measure(Constraints())
+
+        val scale = if (constraints.hasBoundedWidth && content.width > constraints.maxWidth && content.width > 0) {
+            constraints.maxWidth.toFloat() / content.width.toFloat()
+        } else {
+            1f
         }
-        Text(
-            text = "RM",
-            color = color.copy(alpha = 0.5f),
-            modifier = Modifier.padding(
-                end = (size * 0.18f).dp,
-                bottom = (size * 0.12f).dp
-            ),
-            style = v2NumStyle(size * 0.55f, FontWeight.Medium)
-        )
-        Text(text = intStr, color = color, style = v2NumStyle(size, weight))
-        if (showDecimals) {
-            Text(
-                text = ".%02d".format(sub),
-                color = color.copy(alpha = 0.5f),
-                style = v2NumStyle(size, weight)
-            )
+        val scaledWidth = (content.width * scale).toInt()
+        val scaledHeight = (content.height * scale).toInt()
+        layout(scaledWidth, scaledHeight) {
+            content.placeRelativeWithLayer(0, 0) {
+                scaleX = scale
+                scaleY = scale
+                transformOrigin = TransformOrigin(0f, 0f)
+            }
         }
     }
 }
