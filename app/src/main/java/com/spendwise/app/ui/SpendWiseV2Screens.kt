@@ -314,11 +314,18 @@ internal fun V2DashboardScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.Bottom
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    // weight(fill=false): the "You're keeping X%" side keeps
+                    // its natural size; a huge net figure shrinks to fit
+                    // instead of starving it into a vertical letter-stack.
+                    Column(
+                        modifier = Modifier.weight(1f, fill = false),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
                         Text(
                             "Net cashflow · ${summary.month.format(DateTimeFormatter.ofPattern("MMM"))}",
                             color = AppOnSurfaceVariant,
-                            style = v2T(13f * sz, FontWeight.Medium)
+                            style = v2T(13f * sz, FontWeight.Medium),
+                            maxLines = 1
                         )
                         val net = summary.netCents
                         V2Amount(
@@ -339,11 +346,15 @@ internal fun V2DashboardScreen(
                             Text(
                                 "You're keeping ",
                                 color = AppOnSurfaceVariant,
+                                maxLines = 1,
+                                softWrap = false,
                                 style = v2T(12f, FontWeight.Medium)
                             )
                             Text(
                                 "$keepPct%",
                                 color = SwInk,
+                                maxLines = 1,
+                                softWrap = false,
                                 style = v2T(12f, FontWeight.Bold)
                             )
                         }
@@ -1122,16 +1133,24 @@ internal fun V2ActivityScreen(
                     )
                 }
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    // weight(fill=false) flips the squeeze priority: the
+                    // caption keeps its natural size and the AMOUNT shrinks
+                    // (via V2ScaleToFit) when a huge figure runs out of room.
+                    // Without it the amount eats the row and the caption
+                    // stacks one character per line.
                     V2Amount(
                         cents = monthTotalCents,
                         size = 36f,
                         color = SwInk,
-                        animateValue = true
+                        animateValue = true,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                     Text(
                         text = "${if (filter == V2Filter.Income) "income" else "spent"} · ${monthEntries} ${if (monthEntries == 1) "entry" else "entries"}",
                         color = AppOnSurfaceVariant,
                         style = v2T(13f, FontWeight.Medium),
+                        maxLines = 1,
+                        softWrap = false,
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
                 }

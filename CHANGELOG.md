@@ -10,6 +10,9 @@ All notable changes to SpendWise are documented here.
   across every surface: the income/expense summary cards, income-source
   rows, day headers, budget lines, insights categories, the transaction
   history strip, and transfer/recurring rows.
+- Fixed the reverse case too: a very large figure (RM millions) no longer
+  starves the caption beside it — "income · 8 entries" and "You're keeping
+  X%" stay on one line while the amount shrinks to share the row.
 
 ## [1.5] — 2026-07-12
 
