@@ -2,7 +2,7 @@
 
 All notable changes to SpendWise are documented here.
 
-## [Unreleased]
+## [1.5] — 2026-07-12
 
 ### Added
 - **Transfers between accounts** — the add sheet gains a third mode next to
