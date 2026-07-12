@@ -2,7 +2,7 @@
 
 All notable changes to SpendWise are documented here.
 
-## [Unreleased]
+## [1.6] — 2026-07-12
 
 ### Fixed
 - Money figures no longer wrap onto two lines on devices with large font
