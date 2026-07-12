@@ -6,9 +6,10 @@ All notable changes to SpendWise are documented here.
 
 ### Fixed
 - Money figures no longer wrap onto two lines on devices with large font
-  sizes — amounts now shrink slightly to fit their space instead
-  (affected the income/expense summary cards and any tight layout when
-  values crossed four digits).
+  sizes — amounts now shrink slightly to fit their space instead. Hardened
+  across every surface: the income/expense summary cards, income-source
+  rows, day headers, budget lines, insights categories, the transaction
+  history strip, and transfer/recurring rows.
 
 ## [1.5] — 2026-07-12
 

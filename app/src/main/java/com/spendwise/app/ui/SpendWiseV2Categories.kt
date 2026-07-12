@@ -289,6 +289,8 @@ internal fun V2CategoriesScreen(
                                             Text(
                                                 text = "RM ${formatRinggit(totalCents / 100L)}.${"%02d".format(totalCents % 100L)}",
                                                 color = SwInk,
+                                                maxLines = 1,
+                                                softWrap = false,
                                                 style = v2N(13.5f, FontWeight.Bold)
                                             )
                                             // budget limits limit warning check

@@ -103,6 +103,8 @@ internal fun V2TransferRow(
         Text(
             text = transferRm(transfer.amountCents),
             color = AppOnSurfaceVariant,
+            maxLines = 1,
+            softWrap = false,
             style = v2N(13.5f, FontWeight.Bold)
         )
     }
@@ -199,6 +201,8 @@ internal fun V2TransferDetailSheet(
                             Text(
                                 text = transferRm(t.amountCents),
                                 color = SwInk,
+                                maxLines = 1,
+                                softWrap = false,
                                 style = v2N(16f, FontWeight.Bold)
                             )
                         }

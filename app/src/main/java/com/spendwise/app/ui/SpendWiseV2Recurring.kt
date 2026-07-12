@@ -238,6 +238,8 @@ internal fun V2RecurringScreen(
                                         Text(
                                             text = (if (rule.isIncome) "+" else "−") + formatRm(rule.amountCents),
                                             color = if (rule.isIncome) SwPos else SwInk,
+                                            maxLines = 1,
+                                            softWrap = false,
                                             style = v2N(13.5f, FontWeight.Bold)
                                         )
                                         Icon(

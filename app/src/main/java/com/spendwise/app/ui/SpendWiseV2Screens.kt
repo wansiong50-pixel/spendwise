@@ -629,12 +629,16 @@ private fun V2CategoryProgressRow(
                     Text(
                         text = "RM ${formatRinggit(cents / 100L)}",
                         color = SwInk,
+                        maxLines = 1,
+                        softWrap = false,
                         style = v2N(13.5f, FontWeight.Bold)
                     )
                     if (hasBudget) {
                         Text(
                             text = "of RM ${formatRinggit(limit / 100L)}",
                             color = AppOnSurfaceVariant,
+                            maxLines = 1,
+                            softWrap = false,
                             style = v2T(11f, FontWeight.Medium)
                         )
                     }
@@ -1318,11 +1322,18 @@ internal fun V2ActivityScreen(
                             color = AppOnSurfaceVariant,
                             style = v2T(12f, FontWeight.Bold, letter = 0.4f)
                         )
-                        Text(
-                            text = "RM ${formatRinggit(group.spendCents / 100L)}.${"%02d".format(group.spendCents % 100L)}",
-                            color = AppOnSurfaceVariant,
-                            style = v2N(12f, FontWeight.Bold)
-                        )
+                        // Second in a SpaceBetween pair → this is the text
+                        // that gets squeezed when the date label grows at
+                        // large font scales. Shrink, never wrap.
+                        V2ScaleToFit {
+                            Text(
+                                text = "RM ${formatRinggit(group.spendCents / 100L)}.${"%02d".format(group.spendCents % 100L)}",
+                                color = AppOnSurfaceVariant,
+                                maxLines = 1,
+                                softWrap = false,
+                                style = v2N(12f, FontWeight.Bold)
+                            )
+                        }
                     }
                 }
                 item(key = "card-$date") {
@@ -1817,11 +1828,17 @@ private fun V2DeltaRow(
                     style = v2N(11f, FontWeight.ExtraBold)
                 )
             }
-            Text(
-                "$previousLabel · RM ${formatRinggit(previousCents / 100L)}",
-                color = onHeroMutedColor.copy(alpha = onHeroMutedColor.alpha * 0.93f),
-                style = v2T(12f, FontWeight.Medium)
-            )
+            // Measured after the % chip — the squeezable half of the row.
+            // Carries a money figure, so shrink instead of wrapping.
+            V2ScaleToFit {
+                Text(
+                    "$previousLabel · RM ${formatRinggit(previousCents / 100L)}",
+                    color = onHeroMutedColor.copy(alpha = onHeroMutedColor.alpha * 0.93f),
+                    maxLines = 1,
+                    softWrap = false,
+                    style = v2T(12f, FontWeight.Medium)
+                )
+            }
         } else {
             Text(
                 "no prior month to compare",
@@ -1860,6 +1877,8 @@ private fun V2FilterMiniRow(
                 Text(
                     "RM ${formatRinggit(cents / 100L)}",
                     color = SwInk,
+                    maxLines = 1,
+                    softWrap = false,
                     style = v2N(12.5f, FontWeight.Bold)
                 )
             }
@@ -1893,6 +1912,8 @@ private fun V2IncomeSourceRow(name: String, cents: Long, color: Color, icon: Ima
         Text(
             "+ RM ${formatRinggit(cents / 100L)}",
             color = SwPos,
+            maxLines = 1,
+            softWrap = false,
             style = v2N(12.5f, FontWeight.Bold)
         )
     }
@@ -2278,11 +2299,17 @@ internal fun V2TxDetailSheet(
                                             color = if (isCurrent) SwInk else AppOnSurface,
                                             style = v2T(12.5f, if (isCurrent) FontWeight.Bold else FontWeight.SemiBold)
                                         )
-                                        Text(
-                                            "RM ${formatRinggit(h.amountCents / 100L)}.${"%02d".format(h.amountCents % 100L)}",
-                                            color = if (isCurrent) SwInk else AppOnSurfaceVariant,
-                                            style = v2N(12.5f, if (isCurrent) FontWeight.ExtraBold else FontWeight.SemiBold)
-                                        )
+                                        // Squeezed half of a SpaceBetween pair
+                                        // — shrink, never wrap.
+                                        V2ScaleToFit {
+                                            Text(
+                                                "RM ${formatRinggit(h.amountCents / 100L)}.${"%02d".format(h.amountCents % 100L)}",
+                                                color = if (isCurrent) SwInk else AppOnSurfaceVariant,
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                style = v2N(12.5f, if (isCurrent) FontWeight.ExtraBold else FontWeight.SemiBold)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -2813,6 +2840,8 @@ internal fun V2InsightsScreen(
                                     Text(
                                         text = "RM ${formatRinggit(c.totalCents / 100L)}",
                                         color = SwInk,
+                                        maxLines = 1,
+                                        softWrap = false,
                                         style = v2N(14.5f, FontWeight.Bold)
                                     )
                                 }

@@ -1480,13 +1480,10 @@ internal fun V2Amount(
         else -> null
     }
     // A money figure must never wrap or truncate — "15," over "000" reads as
-    // two different numbers, and clipped digits are worse. Measure the row at
-    // its natural width; when the container is narrower (large user font
-    // scale × longer figure × fixed-width neighbors like sparklines), shrink
-    // the whole figure uniformly to fit. Every amount in the app renders
-    // through here, so this guards all surfaces at once.
-    SubcomposeLayout(modifier = modifier) { constraints ->
-        val content = subcompose(Unit) {
+    // two different numbers, and clipped digits are worse. V2ScaleToFit
+    // shrinks the whole figure uniformly when the container is narrower
+    // (large user font scale × longer figure × fixed-width neighbors).
+    V2ScaleToFit(modifier = modifier) {
             Row(verticalAlignment = Alignment.Bottom) {
                 if (displaySign != null) {
                     Text(
@@ -1525,17 +1522,32 @@ internal fun V2Amount(
                     )
                 }
             }
-        }.first().measure(Constraints())
+    }
+}
 
-        val scale = if (constraints.hasBoundedWidth && content.width > constraints.maxWidth && content.width > 0) {
-            constraints.maxWidth.toFloat() / content.width.toFloat()
+/**
+ * Renders [content] at its natural size, or uniformly scaled down when the
+ * container is narrower. For standalone money figures and similar atoms that
+ * must never wrap or truncate — a slightly smaller complete figure always
+ * beats "15," over "000" or clipped digits. Prose should NOT use this; text
+ * that reads as a sentence is supposed to wrap.
+ */
+@Composable
+internal fun V2ScaleToFit(
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    SubcomposeLayout(modifier = modifier) { constraints ->
+        val measured = subcompose(Unit, content).first().measure(Constraints())
+        val scale = if (constraints.hasBoundedWidth && measured.width > constraints.maxWidth && measured.width > 0) {
+            constraints.maxWidth.toFloat() / measured.width.toFloat()
         } else {
             1f
         }
-        val scaledWidth = (content.width * scale).toInt()
-        val scaledHeight = (content.height * scale).toInt()
+        val scaledWidth = (measured.width * scale).toInt()
+        val scaledHeight = (measured.height * scale).toInt()
         layout(scaledWidth, scaledHeight) {
-            content.placeRelativeWithLayer(0, 0) {
+            measured.placeRelativeWithLayer(0, 0) {
                 scaleX = scale
                 scaleY = scale
                 transformOrigin = TransformOrigin(0f, 0f)
