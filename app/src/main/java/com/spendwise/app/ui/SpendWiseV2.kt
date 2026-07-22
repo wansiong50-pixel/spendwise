@@ -383,6 +383,10 @@ fun ExpenseTrackerApp(
     var openedTxId by rememberSaveable { mutableStateOf<Long?>(null) }
     // Transfer detail sheet — same hoisting rationale as openedTxId.
     var openedTransferId by rememberSaveable { mutableStateOf<Long?>(null) }
+    // The repository delete is deferred until the user confirms the exact row.
+    // Keeping this state in the shell lets one safety flow cover expenses,
+    // income entries, and account transfers.
+    var pendingEntryDeletion by remember { mutableStateOf<V2DeleteTarget?>(null) }
     val selectedMonthTransfers by viewModel.selectedMonthTransfers.collectAsStateWithLifecycle()
     // Insights 3-dot menu — hoisted so the shell can blur + dim the bottom
     // nav (which lives here, not in V2InsightsScreen) while the popover is
@@ -669,7 +673,7 @@ fun ExpenseTrackerApp(
                 }
             }
 
-            val hideBottomNav = accountPickerOpen || categoryPickerOpen || monthPickerOpen || customRangeOpen || settingsOpen || yearPickerOpen || restoreConfirmOpen || (openedTxId != null) || (openedTransferId != null)
+            val hideBottomNav = accountPickerOpen || categoryPickerOpen || monthPickerOpen || customRangeOpen || settingsOpen || yearPickerOpen || restoreConfirmOpen || (openedTxId != null) || (openedTransferId != null) || (pendingEntryDeletion != null)
             // Blur + dim the bottom nav when the Insights 3-dot popover is
             // open, so it joins the page in receding behind the menu rather
             // than competing with it.
@@ -717,8 +721,14 @@ fun ExpenseTrackerApp(
                     navController.navigate("add_expense?expenseId=$id&income=false")
                 },
                 onDelete = { id ->
-                    openedTxId = null
-                    viewModel.deleteExpense(id)
+                    openedTx
+                        ?.takeIf { it.id == id }
+                        ?.let { expense ->
+                            val isIncome = state.categories
+                                .firstOrNull { it.id == expense.categoryId }
+                                ?.isIncomeAdjustment == true
+                            pendingEntryDeletion = V2DeleteTarget.ExpenseEntry(expense, isIncome)
+                        }
                 },
                 onDismiss = { openedTxId = null }
             )
@@ -733,10 +743,35 @@ fun ExpenseTrackerApp(
             V2TransferDetailSheet(
                 transfer = openedTransfer,
                 onDelete = { id ->
-                    openedTransferId = null
-                    viewModel.deleteTransfer(id)
+                    openedTransfer
+                        ?.takeIf { it.id == id }
+                        ?.let { transfer ->
+                            pendingEntryDeletion = V2DeleteTarget.TransferEntry(transfer)
+                        }
                 },
                 onDismiss = { openedTransferId = null }
+            )
+
+            V2DeleteEntryDialog(
+                target = pendingEntryDeletion,
+                onConfirm = {
+                    when (val target = pendingEntryDeletion) {
+                        is V2DeleteTarget.ExpenseEntry -> {
+                            pendingEntryDeletion = null
+                            openedTxId = null
+                            viewModel.deleteExpense(target.expense.id)
+                        }
+                        is V2DeleteTarget.TransferEntry -> {
+                            pendingEntryDeletion = null
+                            openedTransferId = null
+                            viewModel.deleteTransfer(target.transfer.id)
+                        }
+                        null -> Unit
+                    }
+                },
+                // Back, outside tap, and Cancel all preserve the record and
+                // return to the still-open detail sheet.
+                onDismiss = { pendingEntryDeletion = null }
             )
 
             // Account & category picker sheets — rendered after the bottom

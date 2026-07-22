@@ -2,6 +2,16 @@
 
 All notable changes to SpendWise are documented here.
 
+## [1.7] - 2026-07-22
+
+### Changed
+- Deleting an expense, income entry, or account transfer now requires explicit
+  confirmation. The dialog identifies the selected entry by name, amount,
+  category/date or account route before anything is removed.
+- Cancel, the system Back action, and tapping outside the confirmation all
+  preserve the entry and return to its detail sheet. The permanent Room delete
+  runs only after the destructive **Delete** action is confirmed.
+
 ## [1.6] — 2026-07-12
 
 ### Fixed
