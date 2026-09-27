@@ -16,23 +16,32 @@ goes, and let automatic daily backups keep your data safe.
 
 ## Features
 
-- **Quick entry** — amount, category, merchant, done. Merchant names are
+- **Quick entry** — amount, category, account, merchant, done. Amounts fill
+  in from the right (type 1, 2, 3 for RM 1.23), and merchant names are
   auto-canonicalized so "grab", "Grab" and "GRAB " all become one merchant.
-- **Dashboard** — total balance across accounts, monthly cashflow, and a
-  spending heatmap calendar.
-- **Activity** — month-scoped transaction list with search, account and
-  category filters.
-- **Insights** — yearly trends, category breakdowns, and spending analysis.
+- **Home** — total balance across accounts, this month's income, spending
+  and budgets, top spending categories, a spending heatmap calendar and
+  recent activity.
+- **Activity** — every entry for a month or a custom date range, with
+  search, account and category filters, and six-month spending and income
+  trends.
+- **Insights** — month and year views, a 12-month cash-flow chart, and
+  category breakdowns.
 - **Budgets** — set a monthly limit per category and track progress.
-- **Multiple accounts** — cash, bank, credit; archive retired accounts
-  without losing history.
+- **Multiple accounts** — cash, bank, e-wallet, credit; archive retired
+  accounts without losing history.
+- **Transfers and recurring entries** — move money between your own
+  accounts without it counting as spending, and let rent, subscriptions and
+  salary log themselves.
 - **Automatic daily backups** — a background job writes a dated JSON backup
   to a folder you choose. Point it at a cloud-synced folder (Drive,
   OneDrive…) and your data leaves the phone automatically. Keeps the newest
   7, prunes the rest.
-- **Manual backup / restore & CSV export** — portable JSON backups and
-  per-year CSV export for spreadsheets.
-- **Dark mode**, fast cold start, smooth on low-end devices.
+- **Manual backup / restore & CSV export** — portable JSON backups (you see
+  what a backup holds before restoring it) and CSV export for any month or
+  year.
+- **Botanical design** — painted and illustrated artwork, a fast cold start,
+  and smooth scrolling on low-end devices.
 
 ## Privacy
 
@@ -78,8 +87,9 @@ APK.
 
 Single-module Kotlin app, plain and dependency-light:
 
-- **UI** — Jetpack Compose (Material 3), single-activity, custom design
-  system in `ui/theme/`.
+- **UI** — Jetpack Compose, single-activity, with the custom Botanical
+  design system in `ui/botanical/` (tokens in `BotanicalTheme.kt`,
+  artwork mapping in `BotanicalArt.kt`).
 - **Data** — Room (SQLite) with month/year-scoped reactive queries, so
   memory stays flat as the ledger grows. Preferences via DataStore.
 - **DI** — manual, via `AppContainer` (no Hilt/Koin).
@@ -96,4 +106,5 @@ Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Bundled fonts are under the SIL Open Font License — see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
