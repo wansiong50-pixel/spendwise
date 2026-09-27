@@ -1,7 +1,7 @@
 package com.spendwise.app.ui.theme
 
 import android.app.ActivityManager
-import android.content.Context
+import android.provider.Settings
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -84,5 +84,24 @@ fun <T> tweenOrSnap(
     val reduced = LocalPerfMode.current.reducedMotion
     return remember(reduced, durationMillis, easing) {
         if (reduced) snap() else tween(durationMillis = durationMillis, easing = easing)
+    }
+}
+
+/**
+ * True when the user has turned animations off system-wide (Developer
+ * options or Accessibility → Remove animations). Motion that moves things
+ * should snap; colour and opacity changes may stay.
+ */
+@Composable
+fun reducedMotion(): Boolean {
+    val context = LocalContext.current
+    return remember(context) {
+        runCatching {
+            Settings.Global.getFloat(
+                context.contentResolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE,
+                1f
+            ) == 0f
+        }.getOrDefault(false)
     }
 }

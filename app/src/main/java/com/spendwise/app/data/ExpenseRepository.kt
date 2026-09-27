@@ -138,6 +138,14 @@ interface ExpenseRepository {
         isIncome: Boolean
     ): Boolean
 
+    /** Rename / re-illustrate a built-in category. Its kind never changes. */
+    suspend fun updateBuiltInCategory(
+        id: Long,
+        name: String,
+        color: Long,
+        iconName: String
+    ): Boolean
+
     /**
      * Delete a custom category. Succeeds if zero expenses reference it.
      * Returns false if it's a built-in, doesn't exist, or still has expenses

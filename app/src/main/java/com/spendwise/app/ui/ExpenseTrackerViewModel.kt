@@ -10,7 +10,6 @@ import com.spendwise.app.AppContainer
 import com.spendwise.app.analytics.MonthlySpendingSummary
 import com.spendwise.app.analytics.SpendingAnalyzer
 import com.spendwise.app.backup.AutoBackupWorker
-import com.spendwise.app.data.AppearancePreferenceStore
 import com.spendwise.app.data.ArchiveAccountResult
 import com.spendwise.app.data.BackupPreferenceStore
 import com.spendwise.app.data.BackupSettings
@@ -19,7 +18,6 @@ import com.spendwise.app.data.ExpenseRepository
 import com.spendwise.app.domain.Account
 import com.spendwise.app.domain.AccountType
 import com.spendwise.app.domain.Category
-import com.spendwise.app.domain.CategoryPeriodStats
 import com.spendwise.app.domain.Expense
 import com.spendwise.app.domain.Budget
 import com.spendwise.app.domain.ExpenseValidationError
@@ -27,12 +25,13 @@ import com.spendwise.app.domain.ExpenseValidator
 import com.spendwise.app.domain.MerchantNames
 import com.spendwise.app.domain.MoneyFormatter
 import com.spendwise.app.domain.MonthlyAggregate
-import com.spendwise.app.domain.RangeStats
 import com.spendwise.app.domain.RecurrenceCadence
 import com.spendwise.app.domain.RecurringRule
 import com.spendwise.app.domain.Transfer
 import com.spendwise.app.export.BackupManager
+import com.spendwise.app.export.BackupPreview
 import com.spendwise.app.export.BackupResult
+import com.spendwise.app.export.PeriodCsvExporter
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
@@ -44,12 +43,23 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** An inclusive span of days. */
+data class DateRange(val from: LocalDate, val to: LocalDate)
+
+/** Entries and transfers loaded for an arbitrary window. */
+data class EntryWindow(
+    val expenses: List<Expense> = emptyList(),
+    val transfers: List<Transfer> = emptyList()
+)
 
 data class DashboardUiState(
     val summary: MonthlySpendingSummary,
@@ -94,7 +104,6 @@ class ExpenseTrackerViewModel(
     application: Application,
     private val expenseRepository: ExpenseRepository,
     private val spendingAnalyzer: SpendingAnalyzer,
-    private val appearancePreferenceStore: AppearancePreferenceStore,
     private val backupManager: BackupManager,
     private val backupPreferenceStore: BackupPreferenceStore
 ) : AndroidViewModel(application) {
@@ -129,22 +138,6 @@ class ExpenseTrackerViewModel(
             )
 
     /**
-     * Set of months for which at least one expense exists. The dashboard
-     * month-picker uses this to disable empty months so the user can't navigate
-     * to a period with nothing to see.
-     */
-    // Derived from the shared [monthlyAggregates] StateFlow (not the
-    // repository flow directly) so both consumers ride one Room observer.
-    val monthsWithData: StateFlow<Set<YearMonth>> = monthlyAggregates
-        .map { aggregates -> aggregates.map { it.month }.toSet() }
-        .distinctUntilChanged()
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = emptySet()
-        )
-
-    /**
      * Recently-entered expenses (bounded window, creation order). Backs the
      * add/edit sheet's merchant suggestions and save-time canonicalization.
      * Shared Eagerly because [saveExpense] reads `.value` synchronously — a
@@ -158,20 +151,13 @@ class ExpenseTrackerViewModel(
             initialValue = emptyList()
         )
 
-    /** Entry count per calendar day — date-picker dots + per-day counters. */
-    val dayEntryCounts: StateFlow<Map<LocalDate, Int>> = expenseRepository.dayEntryCounts
-        .flowOn(Dispatchers.Default)
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = emptyMap()
-        )
-
     /**
      * All-time entry count per category. Eager for the same reason as
-     * [recentExpenses]: [deleteCategory] reads `.value` synchronously.
+     * [recentExpenses]: [deleteCategory] reads `.value` synchronously. The
+     * category form reads it too — a category's kind can only change while
+     * nothing is filed under it.
      */
-    private val categoryEntryCounts: StateFlow<Map<Long, Int>> =
+    val categoryEntryCounts: StateFlow<Map<Long, Int>> =
         expenseRepository.categoryEntryCounts
             .flowOn(Dispatchers.Default)
             .stateIn(
@@ -180,46 +166,15 @@ class ExpenseTrackerViewModel(
                 initialValue = emptyMap()
             )
 
-    /**
-     * Per-category count + spend for the CURRENT calendar month (not the
-     * browsed month) — the Categories screen's "used N× · RM X this month"
-     * chips. "Now" is resolved when collection (re)starts — the flow { }
-     * wrapper runs per subscription, so with WhileSubscribed sharing a
-     * process that lives across a month boundary picks up the new month the
-     * next time the screen is opened after idle.
-     */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val currentMonthCategoryStats: StateFlow<Map<Long, CategoryPeriodStats>> =
-        flow { emit(YearMonth.now(zoneId)) }
-            .flatMapLatest { now ->
-                expenseRepository.categoryStatsInRange(
-                    now.startMillis(),
-                    now.plusMonths(1).startMillis()
-                )
-            }
-            .map { stats -> stats.associateBy { it.categoryId } }
-            .flowOn(Dispatchers.Default)
-            .stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5_000),
-                initialValue = emptyMap()
-            )
-
     // ── Insights year scope ──────────────────────────────────────────────
-    // The Insights tab browses by calendar year. Keeping the selected year
-    // here (rather than in the shell) lets the year's expense window be a
-    // SQL-scoped flow — at most one year of rows resident, only while the
-    // Insights tab is actually subscribed.
-
-    private val _selectedInsightsYear = MutableStateFlow(LocalDate.now(zoneId).year)
-    val selectedInsightsYear: StateFlow<Int> = _selectedInsightsYear
-
-    fun setInsightsYear(year: Int) {
-        _selectedInsightsYear.value = year
-    }
+    // Insights' Year view covers the selected month's calendar year. The
+    // year's rows are a SQL-scoped flow — at most one year resident, and only
+    // while Year view is actually subscribed.
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val insightsYearExpenses: StateFlow<List<Expense>> = _selectedInsightsYear
+    val insightsYearExpenses: StateFlow<List<Expense>> = _selectedMonth
+        .map { it.year }
+        .distinctUntilChanged()
         .flatMapLatest { year ->
             expenseRepository.expensesInRange(
                 YearMonth.of(year, 1).startMillis(),
@@ -233,12 +188,124 @@ class ExpenseTrackerViewModel(
             initialValue = emptyList()
         )
 
-    /** Live summary for the custom-range picker: non-income count + spend. */
-    suspend fun rangeStats(from: LocalDate, to: LocalDate): RangeStats =
-        expenseRepository.rangeStats(
-            from.atStartOfDay(zoneId).toInstant().toEpochMilli(),
-            to.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
+    /**
+     * Six months of rows ending with the selected month — the Activity
+     * spending/income trend, which must honour the current search and
+     * filters and so can't come from the pre-aggregated monthly totals.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val trendExpenses: StateFlow<List<Expense>> = _selectedMonth
+        .flatMapLatest { month ->
+            expenseRepository.expensesInRange(
+                month.minusMonths(5).startMillis(),
+                month.plusMonths(1).startMillis()
+            )
+        }
+        .flowOn(Dispatchers.Default)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList()
         )
+
+    // ── Activity custom date range ───────────────────────────────────────
+    // Null means "the selected month". A range replaces the month window for
+    // Activity only; changing the month clears it.
+
+    private val _activityRange = MutableStateFlow<DateRange?>(null)
+    val activityRange: StateFlow<DateRange?> = _activityRange
+
+    fun setActivityRange(range: DateRange?) {
+        _activityRange.value = range
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val activityRangeEntries: StateFlow<EntryWindow> = _activityRange
+        .flatMapLatest { range ->
+            if (range == null) {
+                flowOf(EntryWindow())
+            } else {
+                val start = range.from.atStartOfDay(zoneId).toInstant().toEpochMilli()
+                val end = range.to.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
+                combine(
+                    expenseRepository.expensesInRange(start, end),
+                    expenseRepository.transfersInRange(start, end)
+                ) { expenses, transfers -> EntryWindow(expenses, transfers) }
+            }
+        }
+        .flowOn(Dispatchers.Default)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = EntryWindow()
+        )
+
+    /** One-off read of every entry between two dates (inclusive) — the filter sheet's live count. */
+    suspend fun loadEntries(from: LocalDate, to: LocalDate): EntryWindow {
+        val start = from.atStartOfDay(zoneId).toInstant().toEpochMilli()
+        val end = to.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
+        return EntryWindow(
+            expenseRepository.expensesInRange(start, end).first(),
+            expenseRepository.transfersInRange(start, end).first()
+        )
+    }
+
+    // ── Status messages ──────────────────────────────────────────────────
+
+    /** One-shot status line; the shell shows it as a toast and clears it. */
+    val userMessage = MutableStateFlow<String?>(null)
+
+    fun clearUserMessage() {
+        userMessage.value = null
+    }
+
+    fun postMessage(message: String) {
+        userMessage.value = message
+    }
+
+    // ── CSV export ───────────────────────────────────────────────────────
+
+    /**
+     * Share every entry from [from] (inclusive) to [untilExclusive] as CSV.
+     * Reads the period straight from the database, so a year export doesn't
+     * depend on which month the screens have loaded.
+     */
+    fun exportCsv(periodLabel: String, fileStem: String, from: LocalDate, untilExclusive: LocalDate) {
+        viewModelScope.launch {
+            val start = from.atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val end = untilExclusive.atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val expenses = expenseRepository.expensesInRange(start, end).first()
+            val transfers = expenseRepository.transfersInRange(start, end).first()
+            val count = expenses.size + transfers.size
+            if (count == 0) {
+                userMessage.value = "No entries in this period to export."
+                return@launch
+            }
+            val state = dashboardState.value
+            val csv = withContext(Dispatchers.Default) {
+                PeriodCsvExporter.buildCsv(
+                    expenses = expenses,
+                    transfers = transfers,
+                    categories = state.categories,
+                    accounts = state.accounts + state.archivedAccounts,
+                    zone = zoneId
+                )
+            }
+            val shared = withContext(Dispatchers.IO) {
+                PeriodCsvExporter.share(
+                    getApplication(),
+                    csv,
+                    "SpendWise-$fileStem.csv",
+                    "SpendWise — $periodLabel"
+                )
+            }
+            userMessage.value = if (shared) {
+                "$count ${if (count == 1) "entry" else "entries"} exported. Transfers are labelled separately."
+            } else {
+                "Couldn't export this period. Try again."
+            }
+        }
+    }
 
     /**
      * History strip for the transaction-detail sheet. Income rows group by
@@ -297,19 +364,6 @@ class ExpenseTrackerViewModel(
                 totalBalanceCents = 0L,
                 budgets = emptyList()
             )
-        )
-
-    val isDarkMode: StateFlow<Boolean> = appearancePreferenceStore.isDarkMode.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = false
-    )
-
-    val startupDarkModePreference: StateFlow<Boolean?> =
-        appearancePreferenceStore.startupDarkModePreference.stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = null
         )
 
     init {
@@ -458,7 +512,7 @@ class ExpenseTrackerViewModel(
             return false
         }
         if (fromAccountId == toAccountId) {
-            formError.value = "Pick two different accounts."
+            formError.value = "Choose two different accounts."
             return false
         }
         val occurredAtMillis = runCatching {
@@ -497,9 +551,9 @@ class ExpenseTrackerViewModel(
         budgetLimitInput: String
     ): String? {
         val name = nameInput.trim()
-        if (name.isBlank()) return "Add a category name."
+        if (name.isBlank()) return "Give this category a name."
         if (dashboardState.value.categories.any { it.name.equals(name, ignoreCase = true) }) {
-            return "That category already exists."
+            return "A category with this name already exists."
         }
         val budgetLimitCents = if (budgetLimitInput.isNotBlank()) {
             // Strict parse (zero rejected): a RM 0.00 monthly limit is never
@@ -532,14 +586,13 @@ class ExpenseTrackerViewModel(
         val name = nameInput.trim()
         val category = dashboardState.value.categories.firstOrNull { it.id == categoryId }
             ?: return "That category is no longer available."
-        if (!category.isCustom) return "Built-in categories can't be edited."
-        if (name.isBlank()) return "Add a category name."
+        if (name.isBlank()) return "Give this category a name."
         if (
             dashboardState.value.categories.any {
                 it.id != categoryId && it.name.equals(name, ignoreCase = true)
             }
         ) {
-            return "That category already exists."
+            return "A category with this name already exists."
         }
         val budgetLimitCents = if (budgetLimitInput.isNotBlank()) {
             // Strict parse (zero rejected): a RM 0.00 monthly limit is never
@@ -548,13 +601,24 @@ class ExpenseTrackerViewModel(
         } else null
 
         viewModelScope.launch {
-            expenseRepository.updateCustomCategory(
-                id = categoryId,
-                name = name,
-                color = color,
-                iconName = iconName,
-                isIncome = isIncome
-            )
+            // Built-ins keep their kind (and can't be deleted); name, art and
+            // budget are the user's to change.
+            if (category.isCustom) {
+                expenseRepository.updateCustomCategory(
+                    id = categoryId,
+                    name = name,
+                    color = color,
+                    iconName = iconName,
+                    isIncome = isIncome
+                )
+            } else {
+                expenseRepository.updateBuiltInCategory(
+                    id = categoryId,
+                    name = name,
+                    color = color,
+                    iconName = iconName
+                )
+            }
             if (budgetLimitCents != null) {
                 expenseRepository.saveCategoryBudget(categoryId, budgetLimitCents)
             } else {
@@ -587,12 +651,6 @@ class ExpenseTrackerViewModel(
         }
     }
 
-    fun setDarkMode(enabled: Boolean) {
-        viewModelScope.launch {
-            appearancePreferenceStore.setDarkMode(enabled)
-        }
-    }
-
     // One-shot StateFlow the Settings UI consumes for snackbar messages.
     // Null = nothing to show. Callers should reset to null after surfacing
     // the result so a config change doesn't re-show the same snackbar.
@@ -607,6 +665,9 @@ class ExpenseTrackerViewModel(
             backupResult.value = backupManager.exportBackup(uri)
         }
     }
+
+    /** Reads a chosen backup file for the restore review; changes nothing. */
+    suspend fun previewBackup(uri: Uri): BackupPreview = backupManager.previewBackup(uri)
 
     fun importBackup(uri: Uri) {
         viewModelScope.launch {
@@ -691,6 +752,20 @@ class ExpenseTrackerViewModel(
         viewModelScope.launch { runRecurringCatchUpNow() }
     }
 
+    /** Recurring → "Check due entries": always answers, even when nothing was due. */
+    fun checkDueRecurring() {
+        viewModelScope.launch {
+            val logged = expenseRepository.processDueRecurringRules(
+                LocalDate.now(zoneId).toEpochDay()
+            )
+            userMessage.value = if (logged > 0) {
+                "$logged recurring ${if (logged == 1) "entry" else "entries"} added"
+            } else {
+                "Recurring entries are up to date"
+            }
+        }
+    }
+
     private suspend fun runRecurringCatchUpNow() {
         val logged = expenseRepository.processDueRecurringRules(
             LocalDate.now(zoneId).toEpochDay()
@@ -772,9 +847,12 @@ class ExpenseTrackerViewModel(
         color: Long
     ): String? {
         val name = nameInput.trim()
-        if (name.isBlank()) return "Add an account name."
-        if (dashboardState.value.accounts.any { it.name.equals(name, ignoreCase = true) }) {
-            return "That account already exists."
+        if (name.isBlank()) return "Give this account a name."
+        if (
+            (dashboardState.value.accounts + dashboardState.value.archivedAccounts)
+                .any { it.name.equals(name, ignoreCase = true) }
+        ) {
+            return "An account with this name already exists."
         }
         val startingBalanceCents = parseBalanceInput(startingBalanceInput)
             ?: return "Enter a valid starting balance."
@@ -800,13 +878,13 @@ class ExpenseTrackerViewModel(
         color: Long
     ): String? {
         val name = nameInput.trim()
-        if (name.isBlank()) return "Add an account name."
+        if (name.isBlank()) return "Give this account a name."
         if (
-            dashboardState.value.accounts.any {
+            (dashboardState.value.accounts + dashboardState.value.archivedAccounts).any {
                 it.id != accountId && it.name.equals(name, ignoreCase = true)
             }
         ) {
-            return "That account already exists."
+            return "An account with this name already exists."
         }
         val startingBalanceCents = parseBalanceInput(startingBalanceInput)
             ?: return "Enter a valid starting balance."
@@ -863,9 +941,16 @@ class ExpenseTrackerViewModel(
     private fun parseBalanceInput(input: String): Long? {
         val trimmed = input.trim()
         if (trimmed.isBlank()) return 0L
+        // A leading minus is an amount already owed (a credit card carrying a
+        // balance, an overdraft) — the form's Positive / Negative choice.
+        val negative = trimmed.startsWith("-") || trimmed.startsWith("−")
         // allowZero: a typed "0" must behave the same as leaving the field
         // blank — both mean "this account starts at zero".
-        return MoneyFormatter.parseToCents(trimmed, allowZero = true)
+        val magnitude = MoneyFormatter.parseToCents(
+            trimmed.trimStart('-', '−'),
+            allowZero = true
+        ) ?: return null
+        return if (negative) -magnitude else magnitude
     }
 
     private fun List<ExpenseValidationError>.toMessage(): String {
@@ -889,7 +974,6 @@ class ExpenseTrackerViewModelFactory(
             application = application,
             expenseRepository = appContainer.expenseRepository,
             spendingAnalyzer = appContainer.spendingAnalyzer,
-            appearancePreferenceStore = appContainer.appearancePreferenceStore,
             backupManager = appContainer.backupManager,
             backupPreferenceStore = appContainer.backupPreferenceStore
         ) as T

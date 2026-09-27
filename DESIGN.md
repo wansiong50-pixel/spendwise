@@ -1,5 +1,7 @@
 # Design System: SpendWise v2 — Soft Fintech with Intent
 
+> **Superseded in 1.8 (September 2026).** The app now uses the Botanical redesign, implemented in `app/src/main/java/com/spendwise/app/ui/botanical/` (colour and type tokens in `BotanicalTheme.kt`, artwork mapping in `BotanicalArt.kt`). The v2 design below is retired and kept only for history. Don't change the code to match it.
+
 > **Source of truth.** Implements the May 2026 redesign handoff (`SpendWise Redesign.html`). When code disagrees with this document, fix the code; when this document disagrees with the handoff, fix this document. The earlier "minimal warm-cream ledger" direction has been retired in full and should not be reintroduced.
 
 ## 1. The direction in one sentence
