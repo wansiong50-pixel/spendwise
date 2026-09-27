@@ -40,8 +40,9 @@ goes, and let automatic daily backups keep your data safe.
 - **Manual backup / restore & CSV export** — portable JSON backups (you see
   what a backup holds before restoring it) and CSV export for any month or
   year.
-- **Botanical design** — painted and illustrated artwork, a fast cold start,
-  and smooth scrolling on low-end devices.
+- **Botanical design** — painted and illustrated artwork, fluid spring-based
+  motion with draggable sheets, a fast cold start, and smooth scrolling on
+  low-end devices.
 
 ## Privacy
 
@@ -89,7 +90,8 @@ Single-module Kotlin app, plain and dependency-light:
 
 - **UI** — Jetpack Compose, single-activity, with the custom Botanical
   design system in `ui/botanical/` (tokens in `BotanicalTheme.kt`,
-  artwork mapping in `BotanicalArt.kt`).
+  artwork mapping in `BotanicalArt.kt`, spring motion and overscroll in
+  `BotanicalMotion.kt`).
 - **Data** — Room (SQLite) with month/year-scoped reactive queries, so
   memory stays flat as the ledger grows. Preferences via DataStore.
 - **DI** — manual, via `AppContainer` (no Hilt/Koin).

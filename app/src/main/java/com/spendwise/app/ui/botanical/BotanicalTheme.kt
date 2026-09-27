@@ -3,6 +3,7 @@ package com.spendwise.app.ui.botanical
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
@@ -241,7 +242,8 @@ private val BotanicalColorScheme = lightColorScheme(
 /**
  * App theme. Keeps the existing font-scale clamp (0.85–1.3): every layout
  * pairs sp text with dp containers, and an unbounded accessibility scale
- * pushes labels out of their frames.
+ * pushes labels out of their frames. Scrollables bounce past their edges
+ * (iOS) instead of stretching.
  */
 @Composable
 fun BotanicalTheme(content: @Composable () -> Unit) {
@@ -255,7 +257,8 @@ fun BotanicalTheme(content: @Composable () -> Unit) {
     }
     CompositionLocalProvider(
         LocalPerfMode provides perf,
-        LocalDensity provides clampedDensity
+        LocalDensity provides clampedDensity,
+        LocalOverscrollFactory provides rememberBounceOverscrollFactory()
     ) {
         MaterialTheme(colorScheme = BotanicalColorScheme, content = content)
     }

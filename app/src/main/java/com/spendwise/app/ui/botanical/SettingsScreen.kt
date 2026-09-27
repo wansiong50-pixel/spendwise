@@ -1,6 +1,11 @@
 package com.spendwise.app.ui.botanical
 
 import android.net.Uri
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -107,18 +112,19 @@ fun SettingsScreen(
                 "A backup is saved to your folder once a day, even while SpendWise is closed. The seven most recent daily files are kept; files you save yourself are never removed.",
                 Modifier.padding(start = 4.dp, end = 4.dp, top = 10.dp)
             )
-            backup.lastError?.let { message ->
+            val shownError = rememberRetained(backup.lastError)
+            Reveal(visible = backup.lastError != null) {
                 Row(Modifier.padding(start = 4.dp, end = 4.dp, top = 12.dp)) {
                     Box(Modifier.size(width = 3.dp, height = 20.dp).background(Color(0xFFDB81A9)))
                     Text(
-                        message,
+                        shownError.orEmpty(),
                         style = body(13f, lineHeight = 1.6f),
                         color = Color.White,
                         modifier = Modifier.padding(start = 12.dp)
                     )
                 }
             }
-            if (folder != null) {
+            Reveal(visible = folder != null) {
                 TextLinkButton(
                     "Save a copy somewhere else",
                     onClick = onDownloadCopy,
@@ -178,12 +184,23 @@ private fun SettingsRow(
             ) { BotIcon(icon, tint = Color.White) }
             Column(Modifier.weight(1f)) {
                 Text(title, style = display(23f), color = Color.White)
-                Text(
-                    subtitle,
-                    style = body(13f, lineHeight = 1.5f),
-                    color = Color(0xFFA3ACC0),
-                    modifier = Modifier.padding(top = 5.dp)
-                )
+                // "Last saved …" and friends crossfade when they change.
+                AnimatedContent(
+                    targetState = subtitle,
+                    transitionSpec = {
+                        fadeIn(BotMotion.smooth(0.3f))
+                            .togetherWith(fadeOut(BotMotion.smooth(0.2f)))
+                            .using(SizeTransform(clip = false) { _, _ -> BotMotion.Resize })
+                    },
+                    label = "settingsSubtitle"
+                ) { line ->
+                    Text(
+                        line,
+                        style = body(13f, lineHeight = 1.5f),
+                        color = Color(0xFFA3ACC0),
+                        modifier = Modifier.padding(top = 5.dp)
+                    )
+                }
             }
             when {
                 trailing != null -> trailing()

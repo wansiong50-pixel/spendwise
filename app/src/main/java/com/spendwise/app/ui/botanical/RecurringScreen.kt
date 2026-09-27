@@ -73,39 +73,46 @@ fun RecurringScreen(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = pageTopPadding(), bottom = bottomPadding)
         ) {
-            item {
-                TopBar("Recurring", "Back to settings", onBack) {
-                    CircleIconButton(BotIcons.Plus, "Add recurring entry", onClick = onAdd, size = 46.dp)
+            item(key = "top") {
+                Box(itemMotion()) {
+                    TopBar("Recurring", "Back to settings", onBack) {
+                        CircleIconButton(BotIcons.Plus, "Add recurring entry", onClick = onAdd, size = 46.dp)
+                    }
                 }
             }
-            item {
-                Kicker("Estimated monthly expenses", Modifier.padding(bottom = 8.dp))
-                Money(
-                    cents = estimatedMonthlyExpenses(rules),
-                    style = moneyStyle(58f, letterSpacingPx = -2f),
-                    color = Color.White,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Subtitle("From active recurring expense rules.", Modifier.padding(top = 10.dp))
-                PillSegment(
-                    options = RuleFilter.entries,
-                    selected = filter,
-                    onSelect = { filter = it },
-                    label = { it.label },
-                    modifier = Modifier.padding(top = 20.dp, bottom = 3.dp)
-                )
+            item(key = "summary") {
+                Column(itemMotion()) {
+                    Kicker("Estimated monthly expenses", Modifier.padding(bottom = 8.dp))
+                    Money(
+                        cents = estimatedMonthlyExpenses(rules),
+                        style = moneyStyle(58f, letterSpacingPx = -2f),
+                        color = Color.White,
+                        modifier = Modifier.fillMaxWidth(),
+                        animate = true
+                    )
+                    Subtitle("From active recurring expense rules.", Modifier.padding(top = 10.dp))
+                    PillSegment(
+                        options = RuleFilter.entries,
+                        selected = filter,
+                        onSelect = { filter = it },
+                        label = { it.label },
+                        modifier = Modifier.padding(top = 20.dp, bottom = 3.dp)
+                    )
+                }
             }
             items(shown, key = { it.id }) { rule ->
                 RuleCard(
                     rule = rule,
                     category = categoriesById[rule.categoryId],
                     onToggle = { onToggle(rule) },
-                    onEdit = { onEdit(rule) }
+                    onEdit = { onEdit(rule) },
+                    modifier = itemMotion()
                 )
             }
             if (shown.isEmpty()) {
-                item {
+                item(key = "empty-$filter") {
                     EmptyState(
+                        modifier = itemMotion(),
                         title = if (filter == RuleFilter.Active) "No active recurring entries" else "No paused recurring entries",
                         body = if (filter == RuleFilter.Active) "Add a recurring bill or income entry." else "Pause an active entry to see it here.",
                         action = if (filter == RuleFilter.Active) "Add recurring entry" else null,
@@ -113,27 +120,29 @@ fun RecurringScreen(
                     )
                 }
             }
-            item {
-                BotButton(
-                    "Check due entries",
-                    onClick = onCheck,
-                    type = ButtonType.Secondary,
-                    modifier = Modifier.fillMaxWidth().padding(top = 20.dp)
-                )
-                Note(
-                    "Due entries are added automatically when you open SpendWise. Pausing skips those dates; resuming starts from the next due date.",
-                    Modifier.padding(top = 25.dp)
-                )
+            item(key = "footer") {
+                Column(itemMotion()) {
+                    BotButton(
+                        "Check due entries",
+                        onClick = onCheck,
+                        type = ButtonType.Secondary,
+                        modifier = Modifier.fillMaxWidth().padding(top = 20.dp)
+                    )
+                    Note(
+                        "Due entries are added automatically when you open SpendWise. Pausing skips those dates; resuming starts from the next due date.",
+                        Modifier.padding(top = 25.dp)
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun RuleCard(rule: RecurringRule, category: Category?, onToggle: () -> Unit, onEdit: () -> Unit) {
+private fun RuleCard(rule: RecurringRule, category: Category?, onToggle: () -> Unit, onEdit: () -> Unit, modifier: Modifier = Modifier) {
     val art = category?.art ?: categoryArtFor(rule.categoryName, rule.categoryIconName, rule.isIncome)
     Column(
-        Modifier
+        modifier
             .padding(top = 13.dp)
             .fillMaxWidth()
             .clip(RoundedCornerShape(26.dp))
@@ -310,7 +319,7 @@ private fun RuleFormBody(
         },
         error = if (errorField == "amount") error else null
     )
-    if (errorField == "amount" && error != null) ErrorBox(error!!, Modifier.padding(bottom = 12.dp))
+    AnimatedError(if (errorField == "amount") error else null, Modifier.padding(bottom = 12.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f)) {
             FieldLabel("Repeats")
@@ -329,10 +338,14 @@ private fun RuleFormBody(
             if (cadence != RecurrenceCadence.Weekly) " Short months use the last available day, then return to your chosen day." else "",
         Modifier.padding(top = 12.dp)
     )
-    if (existing == null && date <= today) {
-        InlineNote("Saving adds entries due through today. Missed dates are included once.", Modifier.padding(top = 12.dp))
-    } else if (existing != null && dateChanged && date <= today) {
-        InlineNote("Past dates aren’t added when you edit a rule. It continues from the next date after today.", Modifier.padding(top = 12.dp))
+    val dateNote = when {
+        existing == null && date <= today -> "Saving adds entries due through today. Missed dates are included once."
+        existing != null && dateChanged && date <= today -> "Past dates aren’t added when you edit a rule. It continues from the next date after today."
+        else -> null
+    }
+    val shownNote = rememberRetained(dateNote)
+    Reveal(visible = dateNote != null) {
+        InlineNote(shownNote.orEmpty(), Modifier.padding(top = 12.dp))
     }
     FieldLabel("Account", modifier = Modifier.padding(top = 16.dp))
     SelectField(
@@ -363,7 +376,7 @@ private fun RuleFormBody(
         maxLength = 1000,
         contentLabel = "Notes"
     )
-    if (error != null && errorField != "amount") ErrorBox(error!!, Modifier.padding(top = 16.dp))
+    AnimatedError(if (errorField != "amount") error else null, Modifier.padding(top = 16.dp))
     BotButton(
         "Save recurring entry",
         onClick = {

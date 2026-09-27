@@ -16,6 +16,16 @@ All notable changes to SpendWise are documented here.
   merchants are one tap away, and closing with unsaved changes asks before
   discarding them. Transfers can now be edited and shared like any other
   entry.
+- **Fluid motion.** Everything moves on springs that keep their speed when
+  interrupted, so nothing jumps or restarts. Sheets and the calendar rise from
+  the bottom and can be dragged down or flicked away. The add/edit card opens
+  over the app, which recedes behind it, and pulls down to close. Pages slide
+  in over the previous one, and on Android 14+ the back gesture drags them
+  away under your finger. Lists bounce at their edges, and Home's painting
+  stretches when pulled down. Headline amounts roll their digits, typed
+  amounts slide along as you type, and segments, switches, charts and
+  progress bars glide. Android's "Remove animations" setting still turns
+  motion off.
 - Insights has Month and Year views, income and expense cards compared with
   the previous period, and a 12-month cash-flow chart.
 - Settings is now a full page, and the app has one appearance: the light/dark

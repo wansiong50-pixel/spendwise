@@ -1,5 +1,12 @@
 package com.spendwise.app.ui.botanical
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -70,21 +77,25 @@ fun CategoriesScreen(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = pageTopPadding(), bottom = bottomPadding)
         ) {
-            item {
-                TopBar("Categories", "Back to settings", onBack) {
-                    CircleIconButton(BotIcons.Plus, "Add category", onClick = { onAdd(kind == CategoryKind.Income) }, size = 46.dp)
+            item(key = "top") {
+                Box(itemMotion()) {
+                    TopBar("Categories", "Back to settings", onBack) {
+                        CircleIconButton(BotIcons.Plus, "Add category", onClick = { onAdd(kind == CategoryKind.Income) }, size = 46.dp)
+                    }
                 }
             }
-            item {
-                Kicker("Expense and income")
-                Subtitle("Edit category names, icons, and budgets.", Modifier.padding(top = 10.dp))
-                PillSegment(
-                    options = CategoryKind.entries,
-                    selected = kind,
-                    onSelect = { kind = it },
-                    label = { it.label },
-                    modifier = Modifier.padding(top = 20.dp, bottom = 16.dp)
-                )
+            item(key = "intro") {
+                Column(itemMotion()) {
+                    Kicker("Expense and income")
+                    Subtitle("Edit category names, icons, and budgets.", Modifier.padding(top = 10.dp))
+                    PillSegment(
+                        options = CategoryKind.entries,
+                        selected = kind,
+                        onSelect = { kind = it },
+                        label = { it.label },
+                        modifier = Modifier.padding(top = 20.dp, bottom = 16.dp)
+                    )
+                }
             }
             shown.chunked(2).forEach { pair ->
                 item(key = pair.joinToString { it.id.toString() }) {
@@ -102,14 +113,14 @@ fun CategoriesScreen(
                         },
                         columns = 2,
                         gap = 12.dp,
-                        modifier = Modifier.padding(bottom = 12.dp)
+                        modifier = itemMotion().padding(bottom = 12.dp)
                     )
                 }
             }
-            item {
+            item(key = "note") {
                 Note(
                     "${monthLabel(month)} · Select a category to edit its name, icon, or budget.",
-                    Modifier.padding(top = 13.dp)
+                    itemMotion().padding(top = 13.dp)
                 )
             }
         }
@@ -248,11 +259,14 @@ private fun CategoryFormBody(
     )
     FormCaption("Icon", Modifier.padding(top = 20.dp, bottom = 8.dp))
     ArtGrid(selected = art, onSelect = { art = it })
-    if (!income) {
-        FormCaption("Monthly budget · optional", Modifier.padding(top = 20.dp))
-        AmountInput(cents = budget, onChange = { budget = it }, label = "Monthly budget")
+    // Income categories have no budget; the field folds away.
+    Reveal(visible = !income) {
+        Column {
+            FormCaption("Monthly budget · optional", Modifier.padding(top = 20.dp))
+            AmountInput(cents = budget, onChange = { budget = it }, label = "Monthly budget")
+        }
     }
-    error?.let { ErrorBox(it, Modifier.padding(vertical = 16.dp)) }
+    AnimatedError(error, Modifier.padding(vertical = 16.dp))
     BotButton(
         "Save category",
         onClick = {
@@ -292,18 +306,18 @@ private fun ArtGrid(selected: CategoryArt, onSelect: (CategoryArt) -> Unit) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     row.forEach { art ->
                         val isSelected = art == selected
+                        val ring = animatedColor(if (isSelected) Bot.ActionSolid else Bot.ActionSolid.copy(alpha = 0f), "artRing")
+                        val tile = animatedColor(if (isSelected) Color(0xFFE6EFFA) else Color(0xFFF0F2F6), "artTile")
                         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                             Box(
                                 modifier = Modifier
                                     .widthIn(max = 64.dp)
                                     .fillMaxWidth()
                                     .aspectRatio(1f)
-                                    .then(
-                                        if (isSelected) Modifier.border(2.dp, Bot.ActionSolid, RoundedCornerShape(18.dp)).padding(3.dp)
-                                        else Modifier.padding(3.dp)
-                                    )
+                                    .border(2.dp, ring, RoundedCornerShape(18.dp))
+                                    .padding(3.dp)
                                     .clip(RoundedCornerShape(16.dp))
-                                    .background(if (isSelected) Color(0xFFE6EFFA) else Color(0xFFF0F2F6))
+                                    .background(tile)
                                     .botPress { onSelect(art) }
                                     .semantics {
                                         contentDescription = "${art.label} icon"
@@ -363,83 +377,101 @@ fun CategoryMigrationSheet(
                 label = { it.label },
                 tone = SegmentTone.OnLight
             )
-            if (mode == MigrationMode.Move) {
-                Support(
-                    "Keep your history by moving it to another category. Amounts and account balances stay the same.",
-                    Modifier.padding(top = 16.dp)
-                )
-                if (destinations.isNotEmpty()) {
-                    FieldLabel("Move to category", modifier = Modifier.padding(top = 16.dp))
-                    SelectField(
-                        options = destinations,
-                        selected = destination,
-                        onSelect = { destination = it },
-                        label = { it.name },
-                        placeholder = "Choose a category",
-                        contentLabel = "Move to category"
-                    )
-                } else {
-                    Support(
-                        "Create another ${if (shown.isIncomeAdjustment) "income" else "expense"} category first, then return here.",
-                        Modifier.padding(top = 12.dp)
-                    )
-                }
-                if (hasBudget) {
-                    Support(
-                        "This category’s budget will be removed. The destination budget stays unchanged.",
-                        Modifier.padding(top = 12.dp)
-                    )
-                }
-                ButtonRow {
-                    BotButton("Cancel", onClick = onCancel, type = ButtonType.Secondary, modifier = Modifier.weight(1f).fillMaxHeight())
-                    BotButton(
-                        "Move & delete category",
-                        onClick = { destination?.let { onMove(it.id) } },
-                        enabled = destination != null,
-                        modifier = Modifier.weight(1f).fillMaxHeight()
-                    )
-                }
-            } else {
-                Support(
-                    "Delete this category, its budget, $entries and $rules. Account balances and reports will be recalculated. Linked rules will stop creating entries.",
-                    Modifier.padding(top = 16.dp)
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 20.dp)
-                        .heightIn(min = 44.dp)
-                        .clickable(role = Role.Checkbox) { confirmed = !confirmed }
-                        .semantics { stateDescription = if (confirmed) "Checked" else "Not checked" },
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(20.dp)
-                            .clip(RoundedCornerShape(5.dp))
-                            .background(if (confirmed) Bot.DangerInk else Color.White)
-                            .border(1.5.dp, if (confirmed) Bot.DangerInk else Color(0xFF8D94A4), RoundedCornerShape(5.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (confirmed) BotIcon(BotIcons.Check, size = 14.dp, tint = Color.White)
+            AnimatedContent(
+                targetState = mode,
+                transitionSpec = {
+                    fadeIn(BotMotion.smooth(0.3f))
+                        .togetherWith(fadeOut(BotMotion.smooth(0.2f)))
+                        .using(SizeTransform(clip = false) { _, _ -> BotMotion.Resize })
+                },
+                label = "migrationMode"
+            ) { shownMode ->
+                Column {
+                    if (shownMode == MigrationMode.Move) {
+                        Support(
+                            "Keep your history by moving it to another category. Amounts and account balances stay the same.",
+                            Modifier.padding(top = 16.dp)
+                        )
+                        if (destinations.isNotEmpty()) {
+                            FieldLabel("Move to category", modifier = Modifier.padding(top = 16.dp))
+                            SelectField(
+                                options = destinations,
+                                selected = destination,
+                                onSelect = { destination = it },
+                                label = { it.name },
+                                placeholder = "Choose a category",
+                                contentLabel = "Move to category"
+                            )
+                        } else {
+                            Support(
+                                "Create another ${if (shown.isIncomeAdjustment) "income" else "expense"} category first, then return here.",
+                                Modifier.padding(top = 12.dp)
+                            )
+                        }
+                        if (hasBudget) {
+                            Support(
+                                "This category’s budget will be removed. The destination budget stays unchanged.",
+                                Modifier.padding(top = 12.dp)
+                            )
+                        }
+                        ButtonRow {
+                            BotButton("Cancel", onClick = onCancel, type = ButtonType.Secondary, modifier = Modifier.weight(1f).fillMaxHeight())
+                            BotButton(
+                                "Move & delete category",
+                                onClick = { destination?.let { onMove(it.id) } },
+                                enabled = destination != null,
+                                modifier = Modifier.weight(1f).fillMaxHeight()
+                            )
+                        }
+                    } else {
+                        Support(
+                            "Delete this category, its budget, $entries and $rules. Account balances and reports will be recalculated. Linked rules will stop creating entries.",
+                            Modifier.padding(top = 16.dp)
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 20.dp)
+                                .heightIn(min = 44.dp)
+                                .clickable(role = Role.Checkbox) { confirmed = !confirmed }
+                                .semantics { stateDescription = if (confirmed) "Checked" else "Not checked" },
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .clip(RoundedCornerShape(5.dp))
+                                    .background(animatedColor(if (confirmed) Bot.DangerInk else Color.White, "tickFill"))
+                                    .border(1.5.dp, animatedColor(if (confirmed) Bot.DangerInk else Color(0xFF8D94A4), "tickEdge"), RoundedCornerShape(5.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                androidx.compose.animation.AnimatedVisibility(
+                                    visible = confirmed,
+                                    enter = fadeIn(BotMotion.smooth(0.18f)) + scaleIn(BotMotion.bouncy(0.3f), initialScale = 0.4f),
+                                    exit = fadeOut(BotMotion.smooth(0.14f)) + scaleOut(BotMotion.smooth(0.2f), targetScale = 0.6f)
+                                ) {
+                                    BotIcon(BotIcons.Check, size = 14.dp, tint = Color.White)
+                                }
+                            }
+                            Text(
+                                "Delete all entries and rules in ${shown.name}",
+                                style = body(14f, FontWeight.Medium, lineHeight = 1.5f),
+                                color = Bot.Ink
+                            )
+                        }
+                        Support("This can’t be undone. Back up first if you might need these entries.")
+                        ButtonRow {
+                            BotButton("Cancel", onClick = onCancel, type = ButtonType.Secondary, modifier = Modifier.weight(1f).fillMaxHeight())
+                            BotButton(
+                                "Delete category & entries",
+                                onClick = onDeleteAll,
+                                type = ButtonType.Danger,
+                                enabled = confirmed,
+                                modifier = Modifier.weight(1f).fillMaxHeight()
+                            )
+                        }
                     }
-                    Text(
-                        "Delete all entries and rules in ${shown.name}",
-                        style = body(14f, FontWeight.Medium, lineHeight = 1.5f),
-                        color = Bot.Ink
-                    )
-                }
-                Support("This can’t be undone. Back up first if you might need these entries.")
-                ButtonRow {
-                    BotButton("Cancel", onClick = onCancel, type = ButtonType.Secondary, modifier = Modifier.weight(1f).fillMaxHeight())
-                    BotButton(
-                        "Delete category & entries",
-                        onClick = onDeleteAll,
-                        type = ButtonType.Danger,
-                        enabled = confirmed,
-                        modifier = Modifier.weight(1f).fillMaxHeight()
-                    )
                 }
             }
         }

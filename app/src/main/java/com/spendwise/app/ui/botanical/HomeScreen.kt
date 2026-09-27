@@ -1,5 +1,12 @@
 package com.spendwise.app.ui.botanical
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -31,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -40,7 +48,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -52,7 +62,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.spendwise.app.R
@@ -63,6 +75,7 @@ import java.time.LocalDate
 import java.time.YearMonth
 import kotlin.math.ceil
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 @Composable
 fun HomeScreen(
@@ -96,6 +109,7 @@ fun HomeScreen(
     // Once the painted hero has scrolled out from under the status bar, the
     // shell swaps in a paper scrim with dark icons.
     val scroll = rememberScrollState()
+    val bounce = rememberBounceOverscroll()
     var heroHeight by remember { mutableIntStateOf(0) }
     val statusPx = with(LocalDensity.current) {
         WindowInsets.statusBars.asPaddingValues().calculateTopPadding().toPx()
@@ -105,15 +119,117 @@ fun HomeScreen(
     }
     LaunchedEffect(covered) { onHeroCoveredChange(covered) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Bot.Paper)
-            .verticalScroll(scroll)
-            .padding(bottom = bottomPadding)
+    Box(Modifier.fillMaxSize().background(Bot.Paper)) {
+        HeroPainting(
+            heroHeight = heroHeight,
+            top = { bounce.offsetY - scroll.value }
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scroll, overscrollEffect = bounce)
+                .padding(bottom = bottomPadding)
+        ) {
+            HomeContent(
+                heroModifier = Modifier.onSizeChanged { heroHeight = it.height },
+                state = state,
+                month = month,
+                recent = recent,
+                categoriesById = categoriesById,
+                names = names,
+                spentByCategory = spentByCategory,
+                onMonthChange = onMonthChange,
+                onOpenPeriodPicker = onOpenPeriodPicker,
+                onOpenSettings = onOpenSettings,
+                onOpenAccounts = onOpenAccounts,
+                onAdd = onAdd,
+                onOpenBudgets = onOpenBudgets,
+                onOpenInsights = onOpenInsights,
+                onOpenActivity = onOpenActivity,
+                onCategory = onCategory,
+                onDay = onDay,
+                onOpenItem = onOpenItem
+            )
+        }
+    }
+}
+
+private val HeroShape = RoundedCornerShape(bottomStart = 46.dp, bottomEnd = 46.dp)
+
+/**
+ * The painted flower behind the hero. It lives outside the scrolling column
+ * so it can do what an iOS stretchy header does: scroll with the hero, and
+ * when Home is pulled down past its top, stay pinned to the top of the
+ * screen and grow to fill the gap instead of leaving blank paper. [top] is
+ * where the hero currently starts on screen.
+ */
+@Composable
+private fun HeroPainting(heroHeight: Int, top: () -> Float) {
+    val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val fallback = with(LocalDensity.current) { (320.dp + statusTop).roundToPx() }
+    // Only a pull past the top changes the frame's size; ordinary scrolling just moves it.
+    val stretch = remember { derivedStateOf { top().coerceAtLeast(0f) } }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .layout { measurable, constraints ->
+                // Pulled down: the frame grows to meet the hero again, its top pinned to
+                // the screen, and the painting (aspect fill) zooms to fill it.
+                val height = (if (heroHeight > 0) heroHeight else fallback) + stretch.value.roundToInt()
+                val placeable = measurable.measure(Constraints.fixed(constraints.maxWidth, height))
+                layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+            }
+            .graphicsLayer {
+                translationY = top().coerceAtMost(0f)
+                shape = HeroShape
+                clip = true
+            }
     ) {
+        Image(
+            painter = painterResource(R.drawable.botanical_hero),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.matchParentSize()
+        )
+        // Legibility wash from the bottom: #030916 at 85% fading out by 65%.
+        Box(
+            Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        0.35f to Color.Transparent,
+                        1f to Color(0xD9030916)
+                    )
+                )
+        )
+    }
+}
+
+@Composable
+private fun HomeContent(
+    heroModifier: Modifier,
+    state: DashboardUiState,
+    month: YearMonth,
+    recent: List<LedgerItem>,
+    categoriesById: Map<Long, Category>,
+    names: Map<Long, String>,
+    spentByCategory: Map<Long, Long>,
+    onMonthChange: (YearMonth) -> Unit,
+    onOpenPeriodPicker: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenAccounts: () -> Unit,
+    onAdd: (EntryKind) -> Unit,
+    onOpenBudgets: () -> Unit,
+    onOpenInsights: () -> Unit,
+    onOpenActivity: () -> Unit,
+    onCategory: (Category) -> Unit,
+    onDay: (LocalDate) -> Unit,
+    onOpenItem: (LedgerItem) -> Unit
+) {
+    Column {
         HomeHero(
-            modifier = Modifier.onSizeChanged { heroHeight = it.height },
+            modifier = heroModifier,
             month = month,
             totalBalance = state.totalBalanceCents,
             onMonthChange = onMonthChange,
@@ -153,27 +269,41 @@ fun HomeScreen(
                     "Recent activity",
                     modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 14.dp)
                 ) { ChipButton("View activity", onClick = onOpenActivity) }
-                if (recent.isEmpty()) {
-                    EmptyState(
-                        title = "No entries this month",
-                        body = "Add an expense, income, or transfer to see it here.",
-                        action = "Add an entry",
-                        onAction = { onAdd(EntryKind.Expense) },
-                        onDark = false
-                    )
-                } else {
-                    recent.forEachIndexed { index, item ->
-                        val text = rowText(item, categoriesById, names)
-                        TransactionRow(
-                            title = text.title,
-                            meta = text.meta,
-                            cents = item.cents,
-                            kind = item.kind,
-                            art = text.art,
-                            onClick = { onOpenItem(item) },
-                            horizontalPadding = 20.dp,
-                            showDivider = index < recent.lastIndex
-                        )
+                // A new set of entries (another month, a new entry) crossfades in as the card resizes.
+                AnimatedContent(
+                    targetState = recent,
+                    transitionSpec = {
+                        fadeIn(BotMotion.smooth(0.32f))
+                            .togetherWith(fadeOut(BotMotion.smooth(0.2f)))
+                            .using(SizeTransform(clip = true) { _, _ -> BotMotion.Resize })
+                    },
+                    contentKey = { rows -> rows.map { it.key } },
+                    label = "recentActivity"
+                ) { rows ->
+                    Column {
+                        if (rows.isEmpty()) {
+                            EmptyState(
+                                title = "No entries this month",
+                                body = "Add an expense, income, or transfer to see it here.",
+                                action = "Add an entry",
+                                onAction = { onAdd(EntryKind.Expense) },
+                                onDark = false
+                            )
+                        } else {
+                            rows.forEachIndexed { index, item ->
+                                val text = rowText(item, categoriesById, names)
+                                TransactionRow(
+                                    title = text.title,
+                                    meta = text.meta,
+                                    cents = item.cents,
+                                    kind = item.kind,
+                                    art = text.art,
+                                    onClick = { onOpenItem(item) },
+                                    horizontalPadding = 20.dp,
+                                    showDivider = index < rows.lastIndex
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -196,31 +326,12 @@ private fun HomeHero(
     val widthDp = LocalConfiguration.current.screenWidthDp
     // clamp(45px, 14vw, 62px)
     val balanceSize = (widthDp * 0.14f).coerceIn(45f, 62f)
-    val shape = RoundedCornerShape(bottomStart = 46.dp, bottomEnd = 46.dp)
+    // The painting behind is drawn by HeroPainting, which can stretch.
     Box(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 320.dp + statusTop)
-            .clip(shape)
     ) {
-        Image(
-            painter = painterResource(R.drawable.botanical_hero),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.matchParentSize()
-        )
-        // Legibility wash from the bottom: #030916 at 85% fading out by 65%.
-        Box(
-            Modifier
-                .matchParentSize()
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        0.35f to Color.Transparent,
-                        1f to Color(0xD9030916)
-                    )
-                )
-        )
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -243,7 +354,8 @@ private fun HomeHero(
                     cents = totalBalance,
                     style = moneyStyle(balanceSize, letterSpacingPx = -2f),
                     color = Color.White,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    animate = true
                 )
             }
             Row(
@@ -325,7 +437,7 @@ private fun BudgetSummary(
     onCategory: (Category) -> Unit,
     onManage: () -> Unit
 ) {
-    Panel {
+    Panel(Modifier.animateContentSize(BotMotion.Resize)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
@@ -348,7 +460,8 @@ private fun BudgetSummary(
                         color = Bot.SurfaceInk,
                         centsScale = 0.8f,
                         abbreviate = true,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        animate = true
                     )
                 }
             }
@@ -422,35 +535,40 @@ private fun TopSpending(
                 horizontalArrangement = Arrangement.spacedBy(gap)
             ) {
                 top.forEach { category ->
-                    Column(
-                        modifier = Modifier
-                            .width(tileWidth)
-                            .heightIn(min = 90.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .botPress { onCategory(category) }
-                            .semantics { contentDescription = "${category.name}, ${formatRm(spentByCategory[category.id] ?: 0L)}" }
-                            .padding(4.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        ArtImage(category.art.drawable, size = 54.dp)
-                        Text(
-                            category.name,
-                            style = display(17f),
-                            color = Bot.SurfaceInk,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center
-                        )
-                        Money(
-                            cents = spentByCategory[category.id] ?: 0L,
-                            style = body(13f, FontWeight.Medium, lineHeight = 1.4f),
-                            color = Bot.SurfaceMuted,
-                            centsScale = 1f,
-                            currencyWeight = FontWeight.Medium,
-                            abbreviate = true,
-                            align = Alignment.CenterHorizontally,
-                            modifier = Modifier.fillMaxWidth().padding(top = 5.dp)
-                        )
+                    // Keyed, so when another month reorders the ranking the tiles glide to their places.
+                    key(category.id) {
+                        Column(
+                            modifier = Modifier
+                                .animatePlacement(BotMotion.smooth(0.45f, IntOffset.VisibilityThreshold))
+                                .width(tileWidth)
+                                .heightIn(min = 90.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .botPress { onCategory(category) }
+                                .semantics { contentDescription = "${category.name}, ${formatRm(spentByCategory[category.id] ?: 0L)}" }
+                                .padding(4.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            ArtImage(category.art.drawable, size = 54.dp)
+                            Text(
+                                category.name,
+                                style = display(17f),
+                                color = Bot.SurfaceInk,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center
+                            )
+                            Money(
+                                cents = spentByCategory[category.id] ?: 0L,
+                                style = body(13f, FontWeight.Medium, lineHeight = 1.4f),
+                                color = Bot.SurfaceMuted,
+                                centsScale = 1f,
+                                currencyWeight = FontWeight.Medium,
+                                abbreviate = true,
+                                align = Alignment.CenterHorizontally,
+                                modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
+                                animate = true
+                            )
+                        }
                     }
                 }
             }
@@ -498,7 +616,11 @@ private fun SpendingHeatmap(
                 )
             }
         }
-        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        // Another month's pattern washes in cell by cell; a sixth week unfolds or folds away.
+        Column(
+            modifier = Modifier.animateContentSize(BotMotion.Resize),
+            verticalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
             calendarCells(month).chunked(7).forEach { week ->
                 Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     week.forEach { date ->
@@ -507,12 +629,16 @@ private fun SpendingHeatmap(
                                 val total = dailyTotals[date.dayOfMonth] ?: 0L
                                 val index = if (total > 0) max(1, ceil(total.toDouble() / maxDay * 4).toInt()) else 0
                                 val future = date > today
+                                val heat = animatedColor(
+                                    if (total > 0) Bot.Heat[index.coerceAtMost(4)] else Color(0xFFF1F0F3),
+                                    "heat"
+                                )
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .alpha(if (future) 0.4f else 1f)
                                         .clip(RoundedCornerShape(9.dp))
-                                        .background(if (total > 0) Bot.Heat[index.coerceAtMost(4)] else Color(0xFFF1F0F3))
+                                        .background(heat)
                                         .botPress(enabled = !future) { onDay(date) }
                                         .semantics {
                                             contentDescription = "${date.dayOfMonth} ${monthLabel(month)}: ${formatRm(total)} spent"

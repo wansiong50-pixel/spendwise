@@ -1,7 +1,15 @@
 package com.spendwise.app.ui.botanical
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -44,6 +52,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.semantics.contentDescription
@@ -72,6 +81,14 @@ private enum class BreakdownMode(val label: String) { Spending("Spending"), Inco
 
 /** A category's total for the period being viewed. */
 data class CategoryShare(val category: Category, val cents: Long)
+
+/** One view of the category breakdown, so a change of view can crossfade. */
+private data class Breakdown(
+    val period: InsightsPeriod,
+    val mode: BreakdownMode,
+    val total: Long,
+    val shares: List<CategoryShare>
+)
 
 /** The period an Insights view (or a category breakdown opened from it) covers. */
 sealed interface InsightsPeriod {
@@ -138,8 +155,10 @@ fun InsightsScreen(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = pageTopPadding(), bottom = bottomPadding)
         ) {
             item(key = "header") {
-                ScreenHeader("Insights", month, onMonthChange, onOpenPeriodPicker) {
-                    BotIcon(BotIcons.Insights, size = 22.dp, tint = Color.White)
+                Box(itemMotion()) {
+                    ScreenHeader("Insights", month, onMonthChange, onOpenPeriodPicker) {
+                        BotIcon(BotIcons.Insights, size = 22.dp, tint = Color.White)
+                    }
                 }
             }
             item(key = "scope") {
@@ -148,36 +167,47 @@ fun InsightsScreen(
                     selected = scope,
                     onSelect = { scope = it },
                     label = { it.label },
-                    modifier = Modifier.padding(top = 16.dp, bottom = 16.dp)
+                    modifier = itemMotion().padding(top = 16.dp, bottom = 16.dp)
                 )
             }
             item(key = "net") {
-                Column {
-                    Kicker(if (scope == InsightsScope.Year) "${month.year} · Net cash flow" else "Net cash flow", Modifier.padding(bottom = 8.dp))
+                Column(itemMotion()) {
+                    AnimatedContent(
+                        targetState = if (scope == InsightsScope.Year) "${month.year} · Net cash flow" else "Net cash flow",
+                        transitionSpec = {
+                            fadeIn(BotMotion.smooth(0.28f))
+                                .togetherWith(fadeOut(BotMotion.smooth(0.18f)))
+                                .using(SizeTransform(clip = false) { _, _ -> BotMotion.Resize })
+                        },
+                        label = "insightsKicker"
+                    ) { kicker ->
+                        Kicker(kicker, Modifier.padding(bottom = 8.dp))
+                    }
                     Money(
                         cents = now.net,
                         style = moneyStyle(58f, letterSpacingPx = -2f),
                         color = Color.White,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        animate = true
                     )
                 }
             }
             item(key = "totals") {
-                InsightsTotals(now, before, beforeLabel, Modifier.padding(top = 20.dp, bottom = 24.dp))
+                InsightsTotals(now, before, beforeLabel, itemMotion().padding(top = 20.dp, bottom = 24.dp))
             }
             item(key = "cashflow") {
-                CashFlowPanel(aggregates = byMonth, month = month)
+                Box(itemMotion()) { CashFlowPanel(aggregates = byMonth, month = month) }
             }
             item(key = "csv") {
                 BotButton(
                     "Export ${period.label()} as CSV",
                     onClick = { onExportCsv(period) },
                     type = ButtonType.Secondary,
-                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp)
+                    modifier = itemMotion().fillMaxWidth().padding(top = 16.dp)
                 )
             }
             item(key = "categories") {
-                Panel(Modifier.padding(top = 14.dp)) {
+                Panel(itemMotion().padding(top = 14.dp)) {
                     SectionHead("By category") {
                         Money(
                             cents = breakdownTotal,
@@ -186,7 +216,8 @@ fun InsightsScreen(
                             centsScale = 0.8f,
                             abbreviate = true,
                             modifier = Modifier.widthIn(max = 180.dp),
-                            align = Alignment.End
+                            align = Alignment.End,
+                            animate = true
                         )
                     }
                     TabSegment(
@@ -197,21 +228,35 @@ fun InsightsScreen(
                         inPanel = true,
                         modifier = Modifier.padding(top = 20.dp, bottom = 8.dp)
                     )
-                    if (breakdownTotal == 0L || shares.isEmpty()) {
-                        EmptyState(
-                            title = "No category activity yet",
-                            body = "Add entries in this period to see your breakdown.",
-                            onDark = false
-                        )
-                    } else {
-                        shares.forEachIndexed { index, share ->
-                            BreakdownRow(
-                                share = share,
-                                total = breakdownTotal,
-                                modeLabel = mode.label.lowercase(),
-                                showDivider = index < shares.lastIndex,
-                                onClick = { onCategory(share.category, period) }
-                            )
+                    // Another view of the breakdown crossfades in while the card eases to its new height.
+                    AnimatedContent(
+                        targetState = Breakdown(period, mode, breakdownTotal, shares),
+                        transitionSpec = {
+                            fadeIn(BotMotion.smooth(0.32f))
+                                .togetherWith(fadeOut(BotMotion.smooth(0.2f)))
+                                .using(SizeTransform(clip = true) { _, _ -> BotMotion.Resize })
+                        },
+                        contentKey = { it.period to it.mode },
+                        label = "breakdown"
+                    ) { shown ->
+                        Column {
+                            if (shown.total == 0L || shown.shares.isEmpty()) {
+                                EmptyState(
+                                    title = "No category activity yet",
+                                    body = "Add entries in this period to see your breakdown.",
+                                    onDark = false
+                                )
+                            } else {
+                                shown.shares.forEachIndexed { index, share ->
+                                    BreakdownRow(
+                                        share = share,
+                                        total = shown.total,
+                                        modeLabel = shown.mode.label.lowercase(),
+                                        showDivider = index < shown.shares.lastIndex,
+                                        onClick = { onCategory(share.category, shown.period) }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -219,7 +264,7 @@ fun InsightsScreen(
             item(key = "note") {
                 Note(
                     "Transfers and opening balance adjustments are excluded from income and spending.",
-                    modifier = Modifier.padding(top = 25.dp)
+                    modifier = itemMotion().padding(top = 25.dp)
                 )
             }
         }
@@ -337,7 +382,8 @@ private fun TotalCard(
                 style = moneyStyle(34f, letterSpacingPx = -1f),
                 color = Color.White,
                 abbreviate = true,
-                modifier = Modifier.fillMaxWidth().padding(top = 18.dp)
+                modifier = Modifier.fillMaxWidth().padding(top = 18.dp),
+                animate = true
             )
             ChangeChip(now = cents, before = before, label = beforeLabel, income = income)
         }
@@ -368,7 +414,17 @@ private fun ChangeChip(now: Long, before: Long, label: String, income: Boolean) 
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         if (pct != null && pct != 0) BotIcon(if (pct > 0) BotIcons.Up else BotIcons.Down, size = 13.dp, tint = color)
-        Text(text, style = body(12f, FontWeight.Medium, lineHeight = 1.3f), color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        AnimatedContent(
+            targetState = text,
+            transitionSpec = {
+                fadeIn(BotMotion.smooth(0.28f))
+                    .togetherWith(fadeOut(BotMotion.smooth(0.18f)))
+                    .using(SizeTransform(clip = false) { _, _ -> BotMotion.Resize })
+            },
+            label = "changeChip"
+        ) { line ->
+            Text(line, style = body(12f, FontWeight.Medium, lineHeight = 1.3f), color = animatedColor(color, "changeInk"), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 
@@ -437,7 +493,8 @@ private fun CashFlowPanel(aggregates: Map<YearMonth, Totals>, month: YearMonth) 
             ) {
                 months.forEachIndexed { i, m ->
                     val isSelected = i == index
-                    val fade by animateFloatAsState(if (isSelected) 1f else 0.28f, tween(160, easing = BotEase), label = "bar")
+                    val fade by animateFloatAsState(if (isSelected) 1f else 0.28f, BotMotion.smooth(0.3f), label = "bar")
+                    val labelInk = animatedColor(if (isSelected) Bot.Navy else Bot.ChartLabel.copy(alpha = 0.6f), "barLabel")
                     Column(
                         modifier = Modifier
                             .width(groupWidth)
@@ -461,10 +518,9 @@ private fun CashFlowPanel(aggregates: Map<YearMonth, Totals>, month: YearMonth) 
                                 Box(
                                     Modifier
                                         .width(17.dp)
-                                        .fillMaxHeight((value.toFloat() / maxValue).coerceIn(0f, 1f))
-                                        .heightIn(min = 2.dp)
+                                        .growingBar((value.toFloat() / maxValue).coerceIn(0f, 1f), order = i, minHeight = 2.dp)
                                         .clip(RoundedCornerShape(topStart = 5.dp, topEnd = 5.dp))
-                                        .alpha(fade)
+                                        .graphicsLayer { alpha = fade }
                                         .background(color)
                                 )
                             }
@@ -473,7 +529,7 @@ private fun CashFlowPanel(aggregates: Map<YearMonth, Totals>, month: YearMonth) 
                         Text(
                             monthShort(m.monthValue),
                             style = body(13f, if (isSelected) FontWeight.Bold else FontWeight.Medium),
-                            color = if (isSelected) Bot.Navy else Bot.ChartLabel.copy(alpha = 0.6f)
+                            color = labelInk
                         )
                     }
                 }
@@ -488,16 +544,26 @@ private fun CashFlowPanel(aggregates: Map<YearMonth, Totals>, month: YearMonth) 
             }
         }
         Box(Modifier.fillMaxWidth().padding(top = 16.dp).height(1.dp).background(Bot.RuleSoft))
-        Column(
-            Modifier
+        // The readout slides the way the selection moved.
+        AnimatedContent(
+            targetState = index,
+            transitionSpec = {
+                val direction = if (targetState > initialState) 1 else -1
+                (slideInHorizontally(BotMotion.smooth(0.36f, IntOffset.VisibilityThreshold)) { w -> direction * w / 6 } + fadeIn(BotMotion.smooth(0.28f)))
+                    .togetherWith(slideOutHorizontally(BotMotion.smooth(0.36f, IntOffset.VisibilityThreshold)) { w -> -direction * w / 6 } + fadeOut(BotMotion.smooth(0.18f)))
+            },
+            modifier = Modifier
                 .padding(top = 14.dp)
-                .semantics { liveRegion = LiveRegionMode.Polite }
-        ) {
-            Text(monthLabel(months[index]), style = body(14f, FontWeight.SemiBold), color = Bot.SurfaceInk)
-            Spacer(Modifier.height(8.dp))
-            DetailLine("Income", formatRm(bars[index].income))
-            DetailLine("Expenses", formatRm(bars[index].expense))
-            DetailLine("Net cash flow", formatRm(bars[index].net))
+                .semantics { liveRegion = LiveRegionMode.Polite },
+            label = "cashFlowDetail"
+        ) { shownIndex ->
+            Column(Modifier.fillMaxWidth()) {
+                Text(monthLabel(months[shownIndex]), style = body(14f, FontWeight.SemiBold), color = Bot.SurfaceInk)
+                Spacer(Modifier.height(8.dp))
+                DetailLine("Income", formatRm(bars[shownIndex].income))
+                DetailLine("Expenses", formatRm(bars[shownIndex].expense))
+                DetailLine("Net cash flow", formatRm(bars[shownIndex].net))
+            }
         }
     }
 }

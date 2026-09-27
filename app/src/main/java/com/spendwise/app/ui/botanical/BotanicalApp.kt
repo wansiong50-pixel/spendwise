@@ -6,12 +6,25 @@ import android.provider.OpenableColumns
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,18 +46,28 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
@@ -52,16 +75,16 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.navigation.NavType
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import androidx.navigation.navArgument
 import com.spendwise.app.backup.AutoBackupWorker
 import com.spendwise.app.data.CategoryDeletion
 import com.spendwise.app.domain.Category
@@ -73,6 +96,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
+import kotlin.math.abs
 import kotlinx.coroutines.launch
 
 private object Routes {
@@ -83,7 +107,6 @@ private object Routes {
     const val Categories = "categories"
     const val Recurring = "recurring"
     const val Settings = "settings"
-    const val Entry = "entry?kind={kind}&date={date}&expenseId={expenseId}&transferId={transferId}"
 }
 
 private enum class Tab(val route: String, val label: String, val icon: () -> ImageVector) {
@@ -92,10 +115,61 @@ private enum class Tab(val route: String, val label: String, val icon: () -> Ima
     Insights(Routes.Insights, "Insights", { BotIcons.Insights })
 }
 
+private val TabRoutes = Tab.entries.map { it.route }.toSet()
+
 private data class CategoryFormRequest(val categoryId: Long?, val income: Boolean)
 private data class AccountFormRequest(val accountId: Long?)
 private data class RuleFormRequest(val ruleId: Long?)
 private data class BreakdownRequest(val categoryId: Long, val period: InsightsPeriod)
+
+/** What the entry card was opened for: a new entry of [kind] on [date], or an existing one. */
+private data class EntryRequest(
+    val kind: EntryKind = EntryKind.Expense,
+    val date: LocalDate? = null,
+    val expenseId: Long = -1L,
+    val transferId: Long = -1L
+)
+
+/** Keeps an open entry card across process death, like the route arguments it replaces. */
+private val EntryRequestSaver = Saver<EntryRequest?, String>(
+    save = { request -> request?.let { "${it.kind.name}|${it.date ?: ""}|${it.expenseId}|${it.transferId}" } },
+    restore = { saved ->
+        val parts = saved.split('|')
+        runCatching {
+            EntryRequest(
+                kind = EntryKind.valueOf(parts[0]),
+                date = parts[1].takeIf { it.isNotEmpty() }?.let(LocalDate::parse),
+                expenseId = parts[2].toLong(),
+                transferId = parts[3].toLong()
+            )
+        }.getOrNull()
+    }
+)
+
+/**
+ * Pages push in from the right over a parallax-shifted, dimmed page (iOS
+ * navigation); popping reverses it, and the predictive back gesture scrubs
+ * the pop under the finger. The three tabs crossfade.
+ */
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.betweenTabs(): Boolean =
+    initialState.destination.route in TabRoutes && targetState.destination.route in TabRoutes
+
+private val pushEnter: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
+    if (betweenTabs()) fadeIn(BotMotion.Fade)
+    else slideInHorizontally(BotMotion.PageOffset) { it }
+}
+private val pushExit: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
+    if (betweenTabs()) fadeOut(BotMotion.Fade)
+    else slideOutHorizontally(BotMotion.PageOffset) { -it / 4 } + fadeOut(BotMotion.PageFade, targetAlpha = 0.45f)
+}
+private val popEnter: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
+    if (betweenTabs()) fadeIn(BotMotion.Fade)
+    else slideInHorizontally(BotMotion.PageOffset) { -it / 4 } + fadeIn(BotMotion.PageFade, initialAlpha = 0.45f)
+}
+private val popExit: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
+    if (betweenTabs()) fadeOut(BotMotion.Fade)
+    else slideOutHorizontally(BotMotion.PageOffset) { it }
+}
 
 /**
  * The app shell: navigation between the three tabs and the secondary pages,
@@ -122,7 +196,7 @@ fun ExpenseTrackerApp(viewModel: ExpenseTrackerViewModel) {
 
     val backStack by navController.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
-    val onTab = route in Tab.entries.map { it.route }
+    val onTab = route in TabRoutes
 
     val incomeIds = remember(state.categories) { incomeCategoryIds(state.categories) }
     val categoriesById = remember(state.categories) { state.categories.associateBy { it.id } }
@@ -145,6 +219,24 @@ fun ExpenseTrackerApp(viewModel: ExpenseTrackerViewModel) {
     var filtersOpen by remember { mutableStateOf(false) }
     var homeHeroCovered by remember { mutableStateOf(false) }
     val editCache = remember { mutableMapOf<String, LedgerItem>() }
+
+    // The entry card is a modal over the app, as on iOS: the app behind it
+    // recedes (smaller, rounded, dimmed) while the card is up, following the
+    // card as it's dragged. [entryModal] is 1 when the card is up, 0 when it
+    // has left; the request is kept while it animates away.
+    var entryRequest by rememberSaveable(stateSaver = EntryRequestSaver) { mutableStateOf<EntryRequest?>(null) }
+    var entryShown by remember { mutableStateOf<EntryRequest?>(null) }
+    val entryModal = remember { Animatable(0f) }
+    LaunchedEffect(entryRequest) {
+        val request = entryRequest
+        if (request != null) {
+            entryShown = request
+            entryModal.animateTo(1f, BotMotion.SheetOpen)
+        } else if (entryShown != null) {
+            entryModal.animateTo(0f, BotMotion.SheetClose)
+            entryShown = null
+        }
+    }
 
     // Activity filters live here so the filter sheet can sit above the tab pill.
     var activityKind by rememberSaveable { mutableStateOf(ActivityKind.All) }
@@ -172,14 +264,14 @@ fun ExpenseTrackerApp(viewModel: ExpenseTrackerViewModel) {
         }
     }
     val openEntry: (EntryKind, LocalDate) -> Unit = { kind, date ->
-        navController.navigate("entry?kind=${kind.name}&date=$date")
+        entryRequest = EntryRequest(kind = kind, date = date)
     }
     val editItem: (LedgerItem) -> Unit = { item ->
         editCache[item.key] = item
         detail = null
-        when (item) {
-            is LedgerItem.Entry -> navController.navigate("entry?expenseId=${item.expense.id}")
-            is LedgerItem.Move -> navController.navigate("entry?transferId=${item.transfer.id}")
+        entryRequest = when (item) {
+            is LedgerItem.Entry -> EntryRequest(expenseId = item.expense.id)
+            is LedgerItem.Move -> EntryRequest(transferId = item.transfer.id)
         }
     }
     val openCategoryForm: (Category?, Boolean) -> Unit = { category, income ->
@@ -254,24 +346,27 @@ fun ExpenseTrackerApp(viewModel: ExpenseTrackerViewModel) {
     // is dark over Home's paper and light over the navy pages.
     val activity = LocalActivity.current
     val view = LocalView.current
-    val paperUnderStatusBar = route == Routes.Home && homeHeroCovered
+    val entryUp = entryShown != null
+    val paperUnderStatusBar = route == Routes.Home && homeHeroCovered && !entryUp
     SideEffect {
         val window = activity?.window ?: return@SideEffect
         WindowCompat.getInsetsController(window, view).apply {
             isAppearanceLightStatusBars = paperUnderStatusBar
-            isAppearanceLightNavigationBars = route == Routes.Home
+            isAppearanceLightNavigationBars = route == Routes.Home && !entryUp
         }
     }
     val statusScrim by animateColorAsState(
-        targetValue = when {
-            route == Routes.Home -> if (homeHeroCovered) Bot.Paper.copy(alpha = 0.94f) else Bot.Paper.copy(alpha = 0f)
-            route?.startsWith("entry") == true -> Bot.PageDeep.copy(alpha = 0f)
+        targetValue = when (route) {
+            Routes.Home -> if (homeHeroCovered) Bot.Paper.copy(alpha = 0.94f) else Bot.Paper.copy(alpha = 0f)
             else -> Bot.PageDeep.copy(alpha = 0.95f)
         },
-        animationSpec = tween(150),
+        animationSpec = BotMotion.smooth(0.3f),
         label = "statusScrim"
     )
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val density = LocalDensity.current
+    val recessTop = with(density) { (statusTop + 8.dp).toPx() }
+    val recessRadius = with(density) { 20.dp.toPx() }
 
     val navInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val navBottom = maxOf(20.dp, navInset)
@@ -280,147 +375,262 @@ fun ExpenseTrackerApp(viewModel: ExpenseTrackerViewModel) {
 
     CompositionLocalProvider(LocalToast provides toast) {
         Box(Modifier.fillMaxSize().background(Bot.PageDeep)) {
-            NavHost(
-                navController = navController,
-                startDestination = Routes.Home,
-                enterTransition = { fadeIn(tween(160)) },
-                exitTransition = { fadeOut(tween(100)) },
-                popEnterTransition = { fadeIn(tween(160)) },
-                popExitTransition = { fadeOut(tween(100)) }
-            ) {
-                composable(Routes.Home) {
-                    HomeScreen(
-                        state = state,
-                        month = month,
-                        monthTransfers = monthTransfers,
-                        bottomPadding = tabClearance,
-                        onMonthChange = changeMonth,
-                        onOpenPeriodPicker = { periodPickerOpen = true },
-                        onOpenSettings = { navController.navigate(Routes.Settings) },
-                        onOpenAccounts = { navController.navigate(Routes.Accounts) },
-                        onAdd = { openEntry(it, todayKl()) },
-                        onOpenBudgets = { navController.navigate(Routes.Categories) },
-                        onOpenInsights = { goTab(Routes.Insights) },
-                        onOpenActivity = { goTab(Routes.Activity) },
-                        onCategory = { breakdown = BreakdownRequest(it.id, InsightsPeriod.OfMonth(month)) },
-                        onDay = { dayOpen = it.toString() },
-                        onOpenItem = { detail = it },
-                        onHeroCoveredChange = { homeHeroCovered = it }
-                    )
-                }
-                composable(Routes.Activity) {
-                    val rangeWindow by viewModel.activityRangeEntries.collectAsStateWithLifecycle()
-                    val showTrend = activityRange == null &&
-                        (activityKind == ActivityKind.Expense || activityKind == ActivityKind.Income)
-                    val trend = if (showTrend) viewModel.trendExpenses.collectAsStateWithLifecycle().value else emptyList()
-                    val items = if (activityRange != null) {
-                        remember(rangeWindow, incomeIds) { ledgerItems(rangeWindow.expenses, rangeWindow.transfers, incomeIds) }
-                    } else monthItems
-                    ActivityScreen(
-                        month = month,
-                        items = items,
-                        categories = state.categories,
-                        accounts = state.accounts + state.archivedAccounts,
-                        query = activityQuery,
-                        range = activityRange,
-                        trendExpenses = trend,
-                        bottomPadding = tabClearance,
-                        onQueryChange = {
-                            activityKind = it.kind
-                            activitySearch = it.search
-                            activityAccount = it.accountId
-                            activityCategory = it.categoryId
-                        },
-                        onClearRange = { viewModel.setActivityRange(null) },
-                        onClearAll = clearActivityFilters,
-                        onMonthChange = changeMonth,
-                        onOpenPeriodPicker = { periodPickerOpen = true },
-                        onAdd = { openEntry(EntryKind.Expense, todayKl()) },
-                        onOpenFilters = { filtersOpen = true },
-                        onOpenItem = { detail = it }
-                    )
-                }
-                composable(Routes.Insights) {
-                    val yearExpenses by viewModel.insightsYearExpenses.collectAsStateWithLifecycle()
-                    InsightsScreen(
-                        state = state,
-                        month = month,
-                        yearExpenses = yearExpenses,
-                        aggregates = aggregates,
-                        bottomPadding = tabClearance,
-                        onMonthChange = changeMonth,
-                        onOpenPeriodPicker = { periodPickerOpen = true },
-                        onCategory = { category, period -> breakdown = BreakdownRequest(category.id, period) },
-                        onExportCsv = { period ->
-                            when (period) {
-                                is InsightsPeriod.OfMonth -> viewModel.exportCsv(
-                                    monthLabel(period.month),
-                                    period.month.toString(),
-                                    period.month.atDay(1),
-                                    period.month.plusMonths(1).atDay(1)
-                                )
-                                is InsightsPeriod.OfYear -> viewModel.exportCsv(
-                                    period.year.toString(),
-                                    period.year.toString(),
-                                    LocalDate.of(period.year, 1, 1),
-                                    LocalDate.of(period.year + 1, 1, 1)
-                                )
-                            }
-                        }
-                    )
-                }
-                composable(
-                    route = Routes.Entry,
-                    arguments = listOf(
-                        navArgument("kind") { type = NavType.StringType; defaultValue = EntryKind.Expense.name },
-                        navArgument("date") { type = NavType.StringType; nullable = true; defaultValue = null },
-                        navArgument("expenseId") { type = NavType.LongType; defaultValue = -1L },
-                        navArgument("transferId") { type = NavType.LongType; defaultValue = -1L }
-                    ),
-                    enterTransition = { fadeIn(tween(200)) },
-                    exitTransition = { fadeOut(tween(150)) },
-                    popExitTransition = { fadeOut(tween(150)) }
-                ) { entry ->
-                    val args = entry.arguments
-                    val expenseId = args?.getLong("expenseId") ?: -1L
-                    val transferId = args?.getLong("transferId") ?: -1L
-                    val target = remember(expenseId, transferId) {
-                        when {
-                            expenseId > 0 -> {
-                                val known = editCache["e$expenseId"] as? LedgerItem.Entry
-                                    ?: (monthItems.firstOrNull { it.key == "e$expenseId" } as? LedgerItem.Entry)
-                                    ?: recentExpenses.firstOrNull { it.id == expenseId }
-                                        ?.let { LedgerItem.Entry(it, it.categoryId in incomeIds) }
-                                known?.let { EntryTarget.EditExpense(it.expense, it.isIncome) }
-                            }
-                            transferId > 0 -> {
-                                val known = editCache["t$transferId"] as? LedgerItem.Move
-                                    ?: (monthItems.firstOrNull { it.key == "t$transferId" } as? LedgerItem.Move)
-                                known?.let { EntryTarget.EditTransfer(it.transfer) }
-                            }
-                            else -> EntryTarget.New(
-                                kind = runCatching { EntryKind.valueOf(args?.getString("kind").orEmpty()) }.getOrDefault(EntryKind.Expense),
-                                date = args?.getString("date")?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: todayKl()
-                            )
+            // Everything under the entry card: it recedes while the card is up.
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        val p = entryModal.value.coerceIn(0f, 1f)
+                        if (p > 0f) {
+                            val scale = 1f - 0.08f * p
+                            scaleX = scale
+                            scaleY = scale
+                            transformOrigin = TransformOrigin(0.5f, 0f)
+                            translationY = recessTop * p
+                            shape = RoundedCornerShape(recessRadius * p)
+                            clip = true
                         }
                     }
-                    if (target == null) {
-                        // The entry vanished (deleted elsewhere, or the process was restored).
-                        LaunchedEffect(Unit) { navController.popBackStack() }
-                    } else {
+            ) {
+                NavHost(
+                    navController = navController,
+                    startDestination = Routes.Home,
+                    enterTransition = pushEnter,
+                    exitTransition = pushExit,
+                    popEnterTransition = popEnter,
+                    popExitTransition = popExit
+                ) {
+                    composable(Routes.Home) {
+                        HomeScreen(
+                            state = state,
+                            month = month,
+                            monthTransfers = monthTransfers,
+                            bottomPadding = tabClearance,
+                            onMonthChange = changeMonth,
+                            onOpenPeriodPicker = { periodPickerOpen = true },
+                            onOpenSettings = { navController.navigate(Routes.Settings) },
+                            onOpenAccounts = { navController.navigate(Routes.Accounts) },
+                            onAdd = { openEntry(it, todayKl()) },
+                            onOpenBudgets = { navController.navigate(Routes.Categories) },
+                            onOpenInsights = { goTab(Routes.Insights) },
+                            onOpenActivity = { goTab(Routes.Activity) },
+                            onCategory = { breakdown = BreakdownRequest(it.id, InsightsPeriod.OfMonth(month)) },
+                            onDay = { dayOpen = it.toString() },
+                            onOpenItem = { detail = it },
+                            onHeroCoveredChange = { homeHeroCovered = it }
+                        )
+                    }
+                    composable(Routes.Activity) {
+                        val rangeWindow by viewModel.activityRangeEntries.collectAsStateWithLifecycle()
+                        val showTrend = activityRange == null &&
+                            (activityKind == ActivityKind.Expense || activityKind == ActivityKind.Income)
+                        val trend = if (showTrend) viewModel.trendExpenses.collectAsStateWithLifecycle().value else emptyList()
+                        val items = if (activityRange != null) {
+                            remember(rangeWindow, incomeIds) { ledgerItems(rangeWindow.expenses, rangeWindow.transfers, incomeIds) }
+                        } else monthItems
+                        ActivityScreen(
+                            month = month,
+                            items = items,
+                            categories = state.categories,
+                            accounts = state.accounts + state.archivedAccounts,
+                            query = activityQuery,
+                            range = activityRange,
+                            trendExpenses = trend,
+                            bottomPadding = tabClearance,
+                            onQueryChange = {
+                                activityKind = it.kind
+                                activitySearch = it.search
+                                activityAccount = it.accountId
+                                activityCategory = it.categoryId
+                            },
+                            onClearRange = { viewModel.setActivityRange(null) },
+                            onClearAll = clearActivityFilters,
+                            onMonthChange = changeMonth,
+                            onOpenPeriodPicker = { periodPickerOpen = true },
+                            onAdd = { openEntry(EntryKind.Expense, todayKl()) },
+                            onOpenFilters = { filtersOpen = true },
+                            onOpenItem = { detail = it }
+                        )
+                    }
+                    composable(Routes.Insights) {
+                        val yearExpenses by viewModel.insightsYearExpenses.collectAsStateWithLifecycle()
+                        InsightsScreen(
+                            state = state,
+                            month = month,
+                            yearExpenses = yearExpenses,
+                            aggregates = aggregates,
+                            bottomPadding = tabClearance,
+                            onMonthChange = changeMonth,
+                            onOpenPeriodPicker = { periodPickerOpen = true },
+                            onCategory = { category, period -> breakdown = BreakdownRequest(category.id, period) },
+                            onExportCsv = { period ->
+                                when (period) {
+                                    is InsightsPeriod.OfMonth -> viewModel.exportCsv(
+                                        monthLabel(period.month),
+                                        period.month.toString(),
+                                        period.month.atDay(1),
+                                        period.month.plusMonths(1).atDay(1)
+                                    )
+                                    is InsightsPeriod.OfYear -> viewModel.exportCsv(
+                                        period.year.toString(),
+                                        period.year.toString(),
+                                        LocalDate.of(period.year, 1, 1),
+                                        LocalDate.of(period.year + 1, 1, 1)
+                                    )
+                                }
+                            }
+                        )
+                    }
+                    composable(Routes.Accounts) {
+                        AccountsScreen(
+                            accounts = state.accounts,
+                            archivedAccounts = state.archivedAccounts,
+                            totalBalance = state.totalBalanceCents,
+                            bottomPadding = pageClearance,
+                            onBack = { navController.popBackStack() },
+                            onAdd = { accountForm = AccountFormRequest(null) },
+                            onEdit = { accountForm = AccountFormRequest(it.id) },
+                            onRestore = {
+                                viewModel.unarchiveAccount(it.id)
+                                toast.show("Account restored")
+                            }
+                        )
+                    }
+                    composable(Routes.Categories) {
+                        CategoriesScreen(
+                            categories = state.categories,
+                            budgets = state.budgets,
+                            month = month,
+                            spentByCategory = remember(state.summary) {
+                                (state.summary.categoryTotals + state.summary.incomeCategoryTotals)
+                                    .associate { it.categoryId to it.totalCents }
+                            },
+                            bottomPadding = pageClearance,
+                            onBack = { navController.popBackStack() },
+                            onAdd = { income -> openCategoryForm(null, income) },
+                            onEdit = { openCategoryForm(it, it.isIncomeAdjustment) }
+                        )
+                    }
+                    composable(Routes.Recurring) {
+                        RecurringScreen(
+                            rules = rules,
+                            categories = state.categories,
+                            bottomPadding = pageClearance,
+                            onBack = { navController.popBackStack() },
+                            onAdd = { ruleForm = RuleFormRequest(null) },
+                            onEdit = { ruleForm = RuleFormRequest(it.id) },
+                            onToggle = { rule ->
+                                viewModel.setRecurringRulePaused(rule.id, paused = !rule.isPaused)
+                                toast.show(if (rule.isPaused) "Recurring entry resumed · paused dates skipped" else "Recurring entry paused")
+                            },
+                            onCheck = viewModel::checkDueRecurring
+                        )
+                    }
+                    composable(Routes.Settings) {
+                        SettingsScreen(
+                            backup = backupSettings,
+                            bottomPadding = pageClearance,
+                            onBack = { navController.popBackStack() },
+                            onAccounts = { navController.navigate(Routes.Accounts) },
+                            onCategories = { navController.navigate(Routes.Categories) },
+                            onRecurring = { navController.navigate(Routes.Recurring) },
+                            onBackupNow = {
+                                val folder = backupSettings.treeUri
+                                if (folder != null) {
+                                    viewModel.backupNow()
+                                    toast.show("Saving a backup to ${backupFolderName(folder)}")
+                                } else {
+                                    saveCopy()
+                                }
+                            },
+                            onRestore = { restoreLauncher.launch(arrayOf("application/json", "application/octet-stream", "text/plain")) },
+                            onToggleDaily = { enable ->
+                                when {
+                                    enable && backupSettings.treeUri == null -> folderLauncher.launch(null)
+                                    else -> {
+                                        viewModel.setAutoBackupEnabled(enable)
+                                        toast.show(if (enable) "Daily backups on" else "Daily backups paused")
+                                    }
+                                }
+                            },
+                            onChooseFolder = { folderLauncher.launch(null) },
+                            onDownloadCopy = saveCopy
+                        )
+                    }
+                }
+
+                // Keeps status-bar icons legible over content scrolling beneath them.
+                Box(Modifier.fillMaxWidth().height(statusTop).background(statusScrim))
+
+                // The tab pill drops away on pages and rises back on the tabs. It's
+                // simply there at launch (the start destination is a tab).
+                val lastTab = rememberRetained(route?.takeIf { it in TabRoutes })
+                val navShown = remember { MutableTransitionState(true) }
+                navShown.targetState = onTab || route == null
+                AnimatedVisibility(
+                    visibleState = navShown,
+                    enter = slideInVertically(BotMotion.smooth(0.42f, IntOffset.VisibilityThreshold)) { it * 2 } + fadeIn(BotMotion.Fade),
+                    exit = slideOutVertically(BotMotion.smooth(0.34f, IntOffset.VisibilityThreshold)) { it * 2 } + fadeOut(BotMotion.Fade),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(start = 16.dp, end = 16.dp, bottom = navBottom)
+                ) {
+                    BottomNav(active = lastTab, onSelect = goTab)
+                }
+            }
+
+            // ── Entry card ─────────────────────────────────────────────────
+            val shownEntry = entryShown
+            if (shownEntry != null) {
+                // Dims the receded app and keeps its touches off while the card is up.
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .drawBehind { drawRect(Color.Black, alpha = 0.34f * entryModal.value.coerceIn(0f, 1f)) }
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = {}
+                        )
+                )
+                val target = remember(shownEntry) {
+                    when {
+                        shownEntry.expenseId > 0 -> {
+                            val id = shownEntry.expenseId
+                            val known = editCache["e$id"] as? LedgerItem.Entry
+                                ?: (monthItems.firstOrNull { it.key == "e$id" } as? LedgerItem.Entry)
+                                ?: recentExpenses.firstOrNull { it.id == id }
+                                    ?.let { LedgerItem.Entry(it, it.categoryId in incomeIds) }
+                            known?.let { EntryTarget.EditExpense(it.expense, it.isIncome) }
+                        }
+                        shownEntry.transferId > 0 -> {
+                            val id = shownEntry.transferId
+                            val known = editCache["t$id"] as? LedgerItem.Move
+                                ?: (monthItems.firstOrNull { it.key == "t$id" } as? LedgerItem.Move)
+                            known?.let { EntryTarget.EditTransfer(it.transfer) }
+                        }
+                        else -> EntryTarget.New(kind = shownEntry.kind, date = shownEntry.date ?: todayKl())
+                    }
+                }
+                if (target == null) {
+                    // The entry vanished (deleted elsewhere, or the process was restored).
+                    LaunchedEffect(Unit) { entryRequest = null }
+                } else {
+                    key(shownEntry) {
                         EntryScreen(
                             target = target,
                             categories = state.categories,
                             accounts = state.accounts,
                             recentExpenses = recentExpenses,
                             formError = formError,
+                            presentation = entryModal,
                             onClearError = viewModel::clearFormError,
                             onSaveExpense = viewModel::saveExpense,
                             onSaveTransfer = viewModel::saveTransfer,
                             onCreateCategory = viewModel::createCategory,
-                            onClose = { navController.popBackStack() },
+                            onClose = { entryRequest = null },
                             onSaved = { date, updated ->
-                                navController.popBackStack()
+                                entryRequest = null
                                 changeMonth(YearMonth.from(date))
                                 clearActivityFilters()
                                 goTab(Routes.Activity)
@@ -429,95 +639,6 @@ fun ExpenseTrackerApp(viewModel: ExpenseTrackerViewModel) {
                         )
                     }
                 }
-                composable(Routes.Accounts) {
-                    AccountsScreen(
-                        accounts = state.accounts,
-                        archivedAccounts = state.archivedAccounts,
-                        totalBalance = state.totalBalanceCents,
-                        bottomPadding = pageClearance,
-                        onBack = { navController.popBackStack() },
-                        onAdd = { accountForm = AccountFormRequest(null) },
-                        onEdit = { accountForm = AccountFormRequest(it.id) },
-                        onRestore = {
-                            viewModel.unarchiveAccount(it.id)
-                            toast.show("Account restored")
-                        }
-                    )
-                }
-                composable(Routes.Categories) {
-                    CategoriesScreen(
-                        categories = state.categories,
-                        budgets = state.budgets,
-                        month = month,
-                        spentByCategory = remember(state.summary) {
-                            (state.summary.categoryTotals + state.summary.incomeCategoryTotals)
-                                .associate { it.categoryId to it.totalCents }
-                        },
-                        bottomPadding = pageClearance,
-                        onBack = { navController.popBackStack() },
-                        onAdd = { income -> openCategoryForm(null, income) },
-                        onEdit = { openCategoryForm(it, it.isIncomeAdjustment) }
-                    )
-                }
-                composable(Routes.Recurring) {
-                    RecurringScreen(
-                        rules = rules,
-                        categories = state.categories,
-                        bottomPadding = pageClearance,
-                        onBack = { navController.popBackStack() },
-                        onAdd = { ruleForm = RuleFormRequest(null) },
-                        onEdit = { ruleForm = RuleFormRequest(it.id) },
-                        onToggle = { rule ->
-                            viewModel.setRecurringRulePaused(rule.id, paused = !rule.isPaused)
-                            toast.show(if (rule.isPaused) "Recurring entry resumed · paused dates skipped" else "Recurring entry paused")
-                        },
-                        onCheck = viewModel::checkDueRecurring
-                    )
-                }
-                composable(Routes.Settings) {
-                    SettingsScreen(
-                        backup = backupSettings,
-                        bottomPadding = pageClearance,
-                        onBack = { navController.popBackStack() },
-                        onAccounts = { navController.navigate(Routes.Accounts) },
-                        onCategories = { navController.navigate(Routes.Categories) },
-                        onRecurring = { navController.navigate(Routes.Recurring) },
-                        onBackupNow = {
-                            val folder = backupSettings.treeUri
-                            if (folder != null) {
-                                viewModel.backupNow()
-                                toast.show("Saving a backup to ${backupFolderName(folder)}")
-                            } else {
-                                saveCopy()
-                            }
-                        },
-                        onRestore = { restoreLauncher.launch(arrayOf("application/json", "application/octet-stream", "text/plain")) },
-                        onToggleDaily = { enable ->
-                            when {
-                                enable && backupSettings.treeUri == null -> folderLauncher.launch(null)
-                                else -> {
-                                    viewModel.setAutoBackupEnabled(enable)
-                                    toast.show(if (enable) "Daily backups on" else "Daily backups paused")
-                                }
-                            }
-                        },
-                        onChooseFolder = { folderLauncher.launch(null) },
-                        onDownloadCopy = saveCopy
-                    )
-                }
-            }
-
-            // Keeps status-bar icons legible over content scrolling beneath them.
-            Box(Modifier.fillMaxWidth().height(statusTop).background(statusScrim))
-
-            if (onTab) {
-                BottomNav(
-                    active = route,
-                    onSelect = goTab,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(start = 16.dp, end = 16.dp, bottom = navBottom)
-                )
             }
 
             // ── Sheets ─────────────────────────────────────────────────────
@@ -793,10 +914,19 @@ fun ExpenseTrackerApp(viewModel: ExpenseTrackerViewModel) {
     }
 }
 
-/** The floating tab pill: Home, Activity, Insights, each with a label. */
+/**
+ * The floating tab pill: Home, Activity, Insights, each with a label. The
+ * dark selection glides from tab to tab on a lively spring, stretching a
+ * little with its speed, and each label turns white as it passes beneath.
+ */
 @Composable
 private fun BottomNav(active: String?, onSelect: (String) -> Unit, modifier: Modifier = Modifier) {
     val haptics = LocalHapticFeedback.current
+    val index = Tab.entries.indexOfFirst { it.route == active }.coerceAtLeast(0)
+    val position = remember { Animatable(index.toFloat()) }
+    LaunchedEffect(index) {
+        position.animateTo(index.toFloat(), spring(dampingRatio = 0.78f, stiffness = stiffnessFor(0.36f)))
+    }
     Row(
         modifier = modifier
             .widthIn(max = 340.dp)
@@ -804,19 +934,33 @@ private fun BottomNav(active: String?, onSelect: (String) -> Unit, modifier: Mod
             .clip(RoundedCornerShape(999.dp))
             .background(Bot.NavBg)
             .border(1.dp, Bot.NavBorder, RoundedCornerShape(999.dp))
-            .padding(5.dp),
+            .padding(5.dp)
+            .drawBehind {
+                val gap = 4.dp.toPx()
+                val count = Tab.entries.size
+                val tab = (size.width - gap * (count - 1)) / count
+                // Up to 12% wider mid-flight, like a droplet being pulled along.
+                val stretch = (abs(position.velocity) / 50f).coerceAtMost(0.12f)
+                val width = tab * (1f + stretch)
+                val left = position.value * (tab + gap) - (width - tab) / 2f
+                drawRoundRect(
+                    color = Bot.NavActive,
+                    topLeft = Offset(left, 0f),
+                    size = Size(width, size.height),
+                    cornerRadius = CornerRadius(size.height / 2f)
+                )
+            },
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Tab.entries.forEach { tab ->
+        Tab.entries.forEachIndexed { i, tab ->
             val selected = tab.route == active
-            val bg by animateColorAsState(if (selected) Bot.NavActive else Color.Transparent, tween(120), label = "tabBg")
-            val ink by animateColorAsState(if (selected) Color.White else Bot.NavInk, tween(120), label = "tabInk")
+            val cover = (1f - abs(position.value - i)).coerceIn(0f, 1f)
+            val ink = lerp(Bot.NavInk, Color.White, cover)
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .height(58.dp)
                     .clip(RoundedCornerShape(99.dp))
-                    .background(bg)
                     .botPress(scale = 1f, role = Role.Tab) {
                         if (!selected) {
                             haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)

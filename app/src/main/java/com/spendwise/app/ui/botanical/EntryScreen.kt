@@ -1,13 +1,20 @@
 package com.spendwise.app.ui.botanical
 
-import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -52,6 +59,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -61,9 +69,15 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
@@ -75,6 +89,9 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import com.spendwise.app.domain.Account
 import com.spendwise.app.domain.Category
@@ -82,8 +99,10 @@ import com.spendwise.app.domain.Expense
 import com.spendwise.app.domain.MerchantNames
 import com.spendwise.app.domain.MoneyFormatter
 import com.spendwise.app.domain.Transfer
-import com.spendwise.app.ui.theme.LocalPerfMode
 import java.time.LocalDate
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.math.max
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 /** What the Entry screen is editing, if anything. */
@@ -98,6 +117,13 @@ sealed interface EntryTarget {
  * entry; the date comes from the illustrated calendar and can't be in the
  * future (recurring rules cover what hasn't happened yet). Closing with
  * unsaved changes asks before discarding them.
+ *
+ * The card is an iOS-style modal: [presentation] (owned by the shell, 1 when
+ * up) raises and lowers it. It rests a little below the status bar and
+ * expands flush when its handle is tapped or dragged, or when the form is
+ * scrolled up; dragging it down past its resting place — from the handle,
+ * or from anywhere once the form is at its top — lowers it toward closing,
+ * and a far enough or fast enough release closes it.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -107,6 +133,7 @@ fun EntryScreen(
     accounts: List<Account>,
     recentExpenses: List<Expense>,
     formError: String?,
+    presentation: Animatable<Float, AnimationVector1D>,
     onClearError: () -> Unit,
     onSaveExpense: (id: Long?, amount: String, categoryId: Long?, accountId: Long?, merchant: String, notes: String, date: String) -> Boolean,
     onSaveTransfer: (id: Long?, amount: String, fromId: Long?, toId: Long?, notes: String, date: String) -> Boolean,
@@ -156,7 +183,7 @@ fun EntryScreen(
     val dirty = snapshot.toString() != original
     val amountFocus = remember { FocusRequester() }
     val haptics = LocalHapticFeedback.current
-    val reduced = LocalPerfMode.current.reducedMotion
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) { onClearError() }
     // A category created from here is selected once it lands in the list.
@@ -170,7 +197,21 @@ fun EntryScreen(
     }
 
     val close = { if (dirty) discardOpen = true else onClose() }
-    BackHandler(enabled = !calendarOpen && !discardOpen && !categoryFormOpen) { close() }
+    // Predictive back lowers the card with the gesture, then closes it (or asks first).
+    PredictiveBackHandler(enabled = !calendarOpen && !discardOpen && !categoryFormOpen) { progress ->
+        try {
+            progress.collect { event -> presentation.snapTo(1f - 0.08f * event.progress) }
+            if (dirty) {
+                discardOpen = true
+                presentation.animateTo(1f, BotMotion.SheetOpen)
+            } else {
+                onClose()
+            }
+        } catch (cancelled: CancellationException) {
+            scope.launch { presentation.animateTo(1f, BotMotion.SheetOpen) }
+            throw cancelled
+        }
+    }
 
     val kindCategories = categories.filter { it.isIncomeAdjustment == (kind == EntryKind.Income) }
     val incomeIds = remember(categories) { incomeCategoryIds(categories) }
@@ -229,27 +270,47 @@ fun EntryScreen(
     val density = LocalDensity.current
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    var dragGap by remember { mutableStateOf<Float?>(null) }
-    val collapsedGap = 28f
-    val gapTarget = dragGap ?: if (expanded) 0f else collapsedGap
-    val gap by animateDpAsState(gapTarget.dp, tween(if (reduced || dragGap != null) 0 else 180), label = "entryGap")
-    val cardRadius by animateDpAsState(if (expanded) 0.dp else 36.dp, tween(if (reduced) 0 else 180), label = "entryRadius")
+    val restingGap = with(density) { RestingGap.toPx() }
+    // How far the card sits below expanded: 0 flush under the status bar, restingGap at rest.
+    val gap = remember { Animatable(if (expanded) 0f else restingGap) }
+    val latestDirty by rememberUpdatedState(dirty)
+    val latestClose by rememberUpdatedState(onClose)
+    val drag = remember(density) { EntryCardDrag(gap, presentation, scope, density, restingGap) }
+    drag.onDetent = { expanded = it }
+    drag.requestClose = {
+        if (latestDirty) {
+            discardOpen = true
+            false
+        } else {
+            latestClose()
+            true
+        }
+    }
     val scroll = rememberScrollState()
 
     Box(
         Modifier
             .fillMaxSize()
-            .background(Bot.PageDeep)
+            .onSizeChanged { drag.height = it.height.toFloat() }
+            .graphicsLayer { translationY = (1f - presentation.value) * size.height }
             .imePadding()
             .semantics { paneTitle = if (isEdit) "Edit entry" else "New entry" }
     ) {
         Column(Modifier.fillMaxSize()) {
-            Spacer(Modifier.height(statusTop + gap))
+            Spacer(Modifier.height(statusTop))
             BoxWithConstraints(
                 Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(topStart = cardRadius, topEnd = cardRadius))
+                    .graphicsLayer {
+                        val g = gap.value
+                        translationY = g
+                        // Rounded at rest, square once flush with the status bar.
+                        val radius = RestingRadius.toPx() * (g / restingGap).coerceIn(0f, 1f)
+                        shape = RoundedCornerShape(topStart = radius, topEnd = radius)
+                        clip = true
+                    }
+                    .nestedScroll(drag.connection)
             ) {
                 val gradientEnd = with(density) { 960.dp.toPx() }
                 Column(
@@ -258,20 +319,14 @@ fun EntryScreen(
                         .verticalScroll(scroll)
                         .heightIn(min = maxHeight)
                         .background(Brush.verticalGradient(listOf(Color(0xFF031EA5), Color.White), startY = 0f, endY = gradientEnd))
-                        .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp + navBottom)
+                        .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp + navBottom + RestingGap)
                 ) {
                     PullHandle(
                         expanded = expanded,
-                        onToggle = { expanded = !expanded },
-                        onDrag = { delta ->
-                            val start = dragGap ?: if (expanded) 0f else collapsedGap
-                            dragGap = (start + with(density) { delta.toDp().value }).coerceIn(0f, collapsedGap)
-                        },
-                        onDragEnd = {
-                            val g = dragGap
-                            if (g != null) expanded = g < collapsedGap / 2
-                            dragGap = null
-                        }
+                        onToggle = { drag.settleOn(expand = !expanded) },
+                        onDragStart = drag::start,
+                        onDrag = drag::by,
+                        onDragEnd = drag::release
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -288,11 +343,17 @@ fun EntryScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(
-                                if (date == todayKl()) "Today" else shortDateLabel(date),
-                                style = body(18f, FontWeight.SemiBold),
-                                color = Color.White
-                            )
+                            AnimatedContent(
+                                targetState = if (date == todayKl()) "Today" else shortDateLabel(date),
+                                transitionSpec = {
+                                    fadeIn(BotMotion.smooth(0.26f))
+                                        .togetherWith(fadeOut(BotMotion.smooth(0.18f)))
+                                        .using(SizeTransform(clip = false) { _, _ -> BotMotion.Resize })
+                                },
+                                label = "entryDate"
+                            ) { label ->
+                                Text(label, style = body(18f, FontWeight.SemiBold), color = Color.White)
+                            }
                             BotIcon(BotIcons.ChevronDown, size = 18.dp, tint = Color.White)
                         }
                         Spacer(Modifier.weight(1f))
@@ -340,8 +401,9 @@ fun EntryScreen(
                         error = amountError,
                         focusRequester = amountFocus
                     )
-                    amountError?.let { ErrorBox(it, Modifier.padding(bottom = 16.dp)) }
-                    if (kind == EntryKind.Transfer) {
+                    AnimatedError(amountError, Modifier.padding(bottom = 16.dp))
+                    // Switching kind unfolds and folds the parts that differ.
+                    Reveal(visible = kind == EntryKind.Transfer) {
                         Text(
                             "Your total balance stays the same.",
                             style = body(14f, lineHeight = 1.5f),
@@ -349,18 +411,33 @@ fun EntryScreen(
                             textAlign = TextAlign.Center,
                             modifier = Modifier.fillMaxWidth().padding(bottom = 22.dp)
                         )
-                    } else {
-                        ChoiceRow(
-                            label = "Category",
-                            action = {
-                                ChoiceAction("Add category", BotIcons.Plus) { categoryFormOpen = true }
-                            }
-                        ) {
-                            kindCategories.forEach { category ->
-                                CategoryChoice(category, selected = category.id == categoryId) {
-                                    categoryId = category.id
-                                    localError = null
+                    }
+                    val entryKind = rememberRetained(kind.takeIf { it != EntryKind.Transfer }) ?: EntryKind.Expense
+                    Reveal(visible = kind != EntryKind.Transfer) {
+                        // Expense and income offer different categories; one set crossfades into the other.
+                        AnimatedContent(
+                            targetState = entryKind,
+                            transitionSpec = {
+                                fadeIn(BotMotion.smooth(0.3f))
+                                    .togetherWith(fadeOut(BotMotion.smooth(0.2f)))
+                                    .using(SizeTransform(clip = false) { _, _ -> BotMotion.Resize })
+                            },
+                            label = "categorySet"
+                        ) { shownKind ->
+                            ChoiceRow(
+                                label = "Category",
+                                action = {
+                                    ChoiceAction("Add category", BotIcons.Plus) { categoryFormOpen = true }
                                 }
+                            ) {
+                                categories
+                                    .filter { it.isIncomeAdjustment == (shownKind == EntryKind.Income) }
+                                    .forEach { category ->
+                                        CategoryChoice(category, selected = category.id == categoryId) {
+                                            categoryId = category.id
+                                            localError = null
+                                        }
+                                    }
                             }
                         }
                     }
@@ -369,51 +446,55 @@ fun EntryScreen(
                             AccountChoice(account, selected = account.id == accountId) { accountId = account.id }
                         }
                     }
-                    if (kind == EntryKind.Transfer) {
+                    Reveal(visible = kind == EntryKind.Transfer) {
                         ChoiceRow(label = "To account") {
                             accounts.forEach { account ->
                                 AccountChoice(account, selected = account.id == toAccountId) { toAccountId = account.id }
                             }
                         }
-                    } else {
-                        val nameLabel = if (kind == EntryKind.Income) "Income source" else "Merchant"
-                        FieldLabel(nameLabel, FieldTone.Entry)
-                        BotTextField(
-                            value = merchant,
-                            onValueChange = {
-                                merchant = it
-                                onClearError()
-                            },
-                            placeholder = if (kind == EntryKind.Income) "e.g. Monthly salary" else "e.g. Coffee shop",
-                            tone = FieldTone.Entry,
-                            maxLength = 100,
-                            contentLabel = nameLabel,
-                            modifier = Modifier.padding(bottom = 16.dp)
-                        )
-                        if (suggestions.isNotEmpty()) {
-                            Column(Modifier.padding(bottom = 20.dp)) {
-                                Text(
-                                    if (merchant.isBlank()) "Recent entries" else "Matching previous entries",
-                                    style = body(13f, FontWeight.SemiBold, lineHeight = 1.4f),
-                                    color = Color(0xFF0B1740)
-                                )
-                                FlowRow(
-                                    modifier = Modifier.padding(top = 8.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    suggestions.forEach { name ->
-                                        Box(
-                                            Modifier
-                                                .heightIn(min = 44.dp)
-                                                .clip(RoundedCornerShape(18.dp))
-                                                .background(Color.White)
-                                                .border(1.dp, Color(0xFFC3CDE1), RoundedCornerShape(18.dp))
-                                                .botPress { merchant = name }
-                                                .padding(horizontal = 14.dp, vertical = 9.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(name, style = body(14f, FontWeight.Medium, lineHeight = 1.4f), color = Color(0xFF203455))
+                    }
+                    Reveal(visible = kind != EntryKind.Transfer) {
+                        Column {
+                            val nameLabel = if (entryKind == EntryKind.Income) "Income source" else "Merchant"
+                            FieldLabel(nameLabel, FieldTone.Entry)
+                            BotTextField(
+                                value = merchant,
+                                onValueChange = {
+                                    merchant = it
+                                    onClearError()
+                                },
+                                placeholder = if (entryKind == EntryKind.Income) "e.g. Monthly salary" else "e.g. Coffee shop",
+                                tone = FieldTone.Entry,
+                                maxLength = 100,
+                                contentLabel = nameLabel,
+                                modifier = Modifier.padding(bottom = 16.dp)
+                            )
+                            val shownSuggestions = rememberRetained(suggestions.takeIf { it.isNotEmpty() }).orEmpty()
+                            Reveal(visible = suggestions.isNotEmpty()) {
+                                Column(Modifier.padding(bottom = 20.dp)) {
+                                    Text(
+                                        if (merchant.isBlank()) "Recent entries" else "Matching previous entries",
+                                        style = body(13f, FontWeight.SemiBold, lineHeight = 1.4f),
+                                        color = Color(0xFF0B1740)
+                                    )
+                                    FlowRow(
+                                        modifier = Modifier.padding(top = 8.dp).animateContentSize(BotMotion.Resize),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        shownSuggestions.forEach { name ->
+                                            Box(
+                                                Modifier
+                                                    .heightIn(min = 44.dp)
+                                                    .clip(RoundedCornerShape(18.dp))
+                                                    .background(Color.White)
+                                                    .border(1.dp, Color(0xFFC3CDE1), RoundedCornerShape(18.dp))
+                                                    .botPress { merchant = name }
+                                                    .padding(horizontal = 14.dp, vertical = 9.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(name, style = body(14f, FontWeight.Medium, lineHeight = 1.4f), color = Color(0xFF203455))
+                                            }
                                         }
                                     }
                                 }
@@ -431,25 +512,26 @@ fun EntryScreen(
                         contentLabel = "Notes",
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
-                    (localError ?: formError)?.takeIf { it.isNotBlank() }?.let { ErrorBox(it) }
-                }
-                Box(
-                    Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = maxOf(16.dp, navBottom))
-                ) {
-                    BotButton(
-                        if (isEdit) "Save changes" else "Save",
-                        onClick = save,
-                        dmSans = true,
-                        color = Bot.ActionSolid,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .shadow(14.dp, RoundedCornerShape(99.dp), ambientColor = Color(0x5903145A), spotColor = Color(0x5903145A))
-                    )
+                    AnimatedError(localError ?: formError)
                 }
             }
+        }
+        // Save floats at the foot of the screen (above the keyboard) while the card moves between its detents.
+        Box(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = maxOf(16.dp, navBottom))
+        ) {
+            BotButton(
+                if (isEdit) "Save changes" else "Save",
+                onClick = save,
+                dmSans = true,
+                color = Bot.ActionSolid,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .shadow(14.dp, RoundedCornerShape(99.dp), ambientColor = Color(0x5903145A), spotColor = Color(0x5903145A))
+            )
         }
 
         CalendarPicker(
@@ -498,13 +580,139 @@ fun EntryScreen(
     }
 }
 
+/** How far the resting card sits below the status bar, and its corner radius there. */
+private val RestingGap = 28.dp
+private val RestingRadius = 36.dp
+
+/**
+ * Drags the entry card. Between expanded (0) and resting ([restingGap]) the
+ * finger moves the card's detent; past resting it lowers the whole card
+ * ([presentation] below 1) toward closing. Pulling up past expanded meets a
+ * rubber band. Release settles on the nearer detent, leaning the way the
+ * finger was moving, or — lowered far or fast enough — asks to close.
+ * As a nested-scroll parent it also takes a pull from the form scrolled to
+ * its top, and raises a resting card to expanded before the form scrolls
+ * up, like an iOS sheet's detents.
+ */
+private class EntryCardDrag(
+    private val gap: Animatable<Float, AnimationVector1D>,
+    private val presentation: Animatable<Float, AnimationVector1D>,
+    private val scope: CoroutineScope,
+    private val density: Density,
+    private val restingGap: Float
+) {
+    var height = 0f
+    var onDetent: (expanded: Boolean) -> Unit = {}
+
+    /** Asks to close; false when the entry has unsaved changes and the question shows instead. */
+    var requestClose: () -> Boolean = { true }
+
+    /** The finger's position: 0 expanded, [restingGap] at rest, more when lowering. */
+    private var travel = 0f
+    private var dragging = false
+
+    private fun positionNow(): Float {
+        val lowered = (1f - presentation.value).coerceAtLeast(0f) * height
+        if (lowered > 0f) return restingGap + lowered
+        val g = gap.value
+        return if (g >= 0f) g else -rubberBandInverse(-g, height)
+    }
+
+    fun start() {
+        dragging = true
+        travel = positionNow()
+    }
+
+    fun by(delta: Float) {
+        if (height <= 0f) return
+        if (!dragging) start()
+        travel += delta
+        val position = travel
+        val shownGap = when {
+            position < 0f -> -rubberBand(-position, height)
+            position > restingGap -> restingGap
+            else -> position
+        }
+        val lowered = (position - restingGap).coerceAtLeast(0f)
+        scope.launch { gap.snapTo(shownGap) }
+        scope.launch { presentation.snapTo(1f - lowered / height) }
+    }
+
+    fun release(velocity: Float) {
+        if (!dragging) return
+        dragging = false
+        if (height <= 0f) return
+        val lowered = (travel - restingGap).coerceAtLeast(0f)
+        val scale = density.density
+        if (lowered > 0f && (velocity > 900f * scale || lowered > height * 0.2f) && velocity > -400f * scale) {
+            if (requestClose()) {
+                scope.launch { presentation.animateTo(0f, BotMotion.SheetClose, initialVelocity = -velocity / height) }
+                return
+            }
+            // Unsaved changes: the card rises back while the question shows.
+            settle(restingGap, velocity)
+            return
+        }
+        val projected = travel + velocity * 0.12f
+        settle(if (projected < restingGap / 2f) 0f else restingGap, velocity)
+    }
+
+    /** Tap on the handle: expand or return to rest. */
+    fun settleOn(expand: Boolean) {
+        travel = positionNow()
+        settle(if (expand) 0f else restingGap, 0f)
+    }
+
+    private fun settle(target: Float, velocity: Float) {
+        onDetent(target == 0f)
+        val wasLowered = travel > restingGap
+        scope.launch {
+            gap.animateTo(target, BotMotion.snappy(0.4f), initialVelocity = if (wasLowered) 0f else velocity)
+        }
+        scope.launch {
+            presentation.animateTo(1f, BotMotion.SheetOpen, initialVelocity = if (wasLowered) -velocity / height else 0f)
+        }
+    }
+
+    val connection = object : NestedScrollConnection {
+        override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+            if (source != NestedScrollSource.UserInput || available.y >= 0f) return Offset.Zero
+            // Pushing up: a lowered or resting card rises to expanded before the form scrolls.
+            val position = if (dragging) travel else positionNow()
+            if (position <= 0f) return Offset.Zero
+            val used = max(available.y, -position)
+            by(used)
+            return Offset(0f, used)
+        }
+
+        override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+            if (source != NestedScrollSource.UserInput || available.y <= 0f) return Offset.Zero
+            by(available.y)
+            return Offset(0f, available.y)
+        }
+
+        override suspend fun onPreFling(available: Velocity): Velocity {
+            if (!dragging) return Velocity.Zero
+            if (travel == 0f || travel == restingGap) {
+                // Landed exactly on a detent: the form keeps its fling.
+                dragging = false
+                onDetent(travel == 0f)
+                return Velocity.Zero
+            }
+            release(available.y)
+            return available
+        }
+    }
+}
+
 /** The grab bar that expands the card to full height (tap or drag). */
 @Composable
 private fun PullHandle(
     expanded: Boolean,
     onToggle: () -> Unit,
+    onDragStart: () -> Unit,
     onDrag: (Float) -> Unit,
-    onDragEnd: () -> Unit
+    onDragEnd: (Float) -> Unit
 ) {
     Box(
         modifier = Modifier
@@ -514,7 +722,8 @@ private fun PullHandle(
             .draggable(
                 state = rememberDraggableState(onDrag),
                 orientation = Orientation.Vertical,
-                onDragStopped = { onDragEnd() }
+                onDragStarted = { onDragStart() },
+                onDragStopped = { velocity -> onDragEnd(velocity) }
             )
             .botPress(scale = 1f, onClick = onToggle)
             .semantics {
@@ -625,17 +834,24 @@ private fun ChoiceAction(label: String, icon: androidx.compose.ui.graphics.vecto
     }
 }
 
+/** A choice's check: pops in with a little bounce, shrinks away. */
+private val CheckIn = fadeIn(BotMotion.smooth(0.2f)) + scaleIn(BotMotion.bouncy(0.34f), initialScale = 0.4f)
+private val CheckOut = fadeOut(BotMotion.smooth(0.16f)) + scaleOut(BotMotion.smooth(0.22f), targetScale = 0.6f)
+
 @Composable
 private fun CategoryChoice(category: Category, selected: Boolean, onClick: () -> Unit) {
     val shape = RoundedCornerShape(20.dp)
+    val fill = animatedColor(if (selected) Color.Black else Color(0x33FFFFFF), "choiceFill")
+    val edge = animatedColor(if (selected) Color.Black else Color(0x60FFFFFF), "choiceEdge")
+    val ink = animatedColor(if (selected) Color.White else Color(0xFF0B1740), "choiceInk")
     Box(
         modifier = Modifier
             .revealWhenSelected(selected)
             .widthIn(min = 88.dp, max = 136.dp)
             .height(112.dp)
             .clip(shape)
-            .background(if (selected) Color.Black else Color(0x33FFFFFF))
-            .border(1.dp, if (selected) Color.Black else Color(0x60FFFFFF), shape)
+            .background(fill)
+            .border(1.dp, edge, shape)
             .botPress(onClick = onClick)
             .semantics {
                 contentDescription = category.name
@@ -656,7 +872,7 @@ private fun CategoryChoice(category: Category, selected: Boolean, onClick: () ->
             Text(
                 category.name,
                 style = body(14f, FontWeight.Medium, lineHeight = 1.3f),
-                color = if (selected) Color.White else Color(0xFF0B1740),
+                color = ink,
                 textAlign = TextAlign.Center,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
@@ -664,8 +880,8 @@ private fun CategoryChoice(category: Category, selected: Boolean, onClick: () ->
         }
         AnimatedVisibility(
             visible = selected,
-            enter = fadeIn(tween(150)) + scaleIn(tween(150, easing = BotEase), initialScale = 0.25f),
-            exit = fadeOut(tween(150)) + scaleOut(tween(150, easing = BotEase), targetScale = 0.25f),
+            enter = CheckIn,
+            exit = CheckOut,
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(6.dp)
@@ -687,14 +903,17 @@ private fun CategoryChoice(category: Category, selected: Boolean, onClick: () ->
 @Composable
 private fun AccountChoice(account: Account, selected: Boolean, onClick: () -> Unit) {
     val shape = RoundedCornerShape(100.dp)
+    val fill = animatedColor(if (selected) Color.Black else Color(0x1AFFFFFF), "accountFill")
+    val edge = animatedColor(if (selected) Color.Black else Color(0x60FFFFFF), "accountEdge")
+    val ink = animatedColor(if (selected) Color.White else Color(0xFF111111), "accountInk")
     Row(
         modifier = Modifier
             .revealWhenSelected(selected)
             .widthIn(max = 280.dp)
             .heightIn(min = 52.dp)
             .clip(shape)
-            .background(if (selected) Color.Black else Color(0x1AFFFFFF))
-            .border(1.dp, if (selected) Color.Black else Color(0x60FFFFFF), shape)
+            .background(fill)
+            .border(1.dp, edge, shape)
             .botPress(onClick = onClick)
             .semantics {
                 contentDescription = account.name
@@ -708,12 +927,13 @@ private fun AccountChoice(account: Account, selected: Boolean, onClick: () -> Un
         Text(
             account.name,
             style = body(14f, FontWeight.Medium, lineHeight = 1.4f),
-            color = if (selected) Color.White else Color(0xFF111111)
+            color = ink
         )
+        // The chip widens smoothly to make room for its check.
         AnimatedVisibility(
             visible = selected,
-            enter = fadeIn(tween(150)) + scaleIn(tween(150, easing = BotEase), initialScale = 0.25f),
-            exit = fadeOut(tween(100))
+            enter = CheckIn + expandHorizontally(BotMotion.snappy(0.32f, IntSize.VisibilityThreshold), expandFrom = Alignment.Start),
+            exit = CheckOut + shrinkHorizontally(BotMotion.smooth(0.26f, IntSize.VisibilityThreshold), shrinkTowards = Alignment.Start)
         ) {
             BotIcon(BotIcons.Check, size = 16.dp, tint = Color.White, modifier = Modifier.width(16.dp))
         }

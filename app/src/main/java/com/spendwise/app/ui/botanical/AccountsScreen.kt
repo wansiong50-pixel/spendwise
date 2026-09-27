@@ -62,26 +62,32 @@ fun AccountsScreen(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = pageTopPadding(), bottom = bottomPadding)
         ) {
-            item {
-                TopBar("Your accounts", "Back", onBack) {
-                    CircleIconButton(BotIcons.Plus, "Add account", onClick = onAdd, size = 46.dp)
+            item(key = "top") {
+                Box(itemMotion()) {
+                    TopBar("Your accounts", "Back", onBack) {
+                        CircleIconButton(BotIcons.Plus, "Add account", onClick = onAdd, size = 46.dp)
+                    }
                 }
             }
-            item {
-                Kicker("Across ${accounts.size} ${if (accounts.size == 1) "account" else "accounts"}", Modifier.padding(bottom = 8.dp))
-                Money(
-                    cents = totalBalance,
-                    style = moneyStyle(58f, letterSpacingPx = -2f),
-                    color = Color.White,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 28.dp)
-                )
+            item(key = "total") {
+                Column(itemMotion()) {
+                    Kicker("Across ${accounts.size} ${if (accounts.size == 1) "account" else "accounts"}", Modifier.padding(bottom = 8.dp))
+                    Money(
+                        cents = totalBalance,
+                        style = moneyStyle(58f, letterSpacingPx = -2f),
+                        color = Color.White,
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 28.dp),
+                        animate = true
+                    )
+                }
             }
             items(accounts, key = { it.id }) { account ->
-                AccountCard(account, onEdit = { onEdit(account) }, modifier = Modifier.padding(bottom = 18.dp))
+                AccountCard(account, onEdit = { onEdit(account) }, modifier = itemMotion().padding(bottom = 18.dp))
             }
             if (accounts.isEmpty()) {
-                item {
+                item(key = "empty") {
                     EmptyState(
+                        modifier = itemMotion(),
                         title = "Your first account",
                         body = "Add a bank, wallet, or cash account to get started.",
                         action = "Add account",
@@ -89,23 +95,25 @@ fun AccountsScreen(
                     )
                 }
             }
-            item {
+            item(key = "add") {
                 BotButton(
                     "Add another account",
                     onClick = onAdd,
                     type = ButtonType.Secondary,
                     icon = BotIcons.Plus,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = itemMotion().fillMaxWidth()
                 )
             }
             if (archivedAccounts.isNotEmpty()) {
-                item {
-                    Box(Modifier.fillMaxWidth().padding(top = 26.dp).height(1.dp).background(Color(0x25FFFFFF)))
-                    Kicker("Archived · kept for your records", Modifier.padding(top = 22.dp, bottom = 8.dp))
+                item(key = "archived") {
+                    Column(itemMotion()) {
+                        Box(Modifier.fillMaxWidth().padding(top = 26.dp).height(1.dp).background(Color(0x25FFFFFF)))
+                        Kicker("Archived · kept for your records", Modifier.padding(top = 22.dp, bottom = 8.dp))
+                    }
                 }
                 items(archivedAccounts, key = { "archived-${it.id}" }) { account ->
                     Row(
-                        modifier = Modifier
+                        modifier = itemMotion()
                             .fillMaxWidth()
                             .padding(vertical = 17.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -289,13 +297,14 @@ private fun AccountFormBody(
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         AccountScene.entries.forEachIndexed { index, option ->
             val selected = option == scene
+            val ring = animatedColor(if (selected) Bot.ActionSolid else Bot.ActionSolid.copy(alpha = 0f), "sceneRing")
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 Box(
                     modifier = Modifier
                         .widthIn(max = 64.dp)
                         .fillMaxWidth()
                         .aspectRatio(1f)
-                        .then(if (selected) Modifier.border(2.dp, Bot.ActionSolid, RoundedCornerShape(18.dp)) else Modifier)
+                        .border(2.dp, ring, RoundedCornerShape(18.dp))
                         .padding(3.dp)
                         .clip(RoundedCornerShape(16.dp))
                         .background(Color(0xFFF0F2F6))
@@ -321,7 +330,7 @@ private fun AccountFormBody(
             }
         }
     }
-    error?.let { ErrorBox(it, Modifier.padding(top = 16.dp)) }
+    AnimatedError(error, Modifier.padding(top = 16.dp))
     BotButton(
         "Save account",
         onClick = {

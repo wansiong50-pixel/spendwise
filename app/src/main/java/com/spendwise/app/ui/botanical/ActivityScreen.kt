@@ -1,6 +1,14 @@
 package com.spendwise.app.ui.botanical
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -105,32 +113,40 @@ fun ActivityScreen(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = pageTopPadding(), bottom = bottomPadding)
         ) {
             item(key = "header") {
-                ScreenHeader(
-                    title = "Activity",
-                    month = month,
-                    onMonthChange = onMonthChange,
-                    onOpenPicker = onOpenPeriodPicker
-                ) {
-                    CircleIconButton(BotIcons.Plus, "Add entry", onClick = onAdd)
+                Box(itemMotion()) {
+                    ScreenHeader(
+                        title = "Activity",
+                        month = month,
+                        onMonthChange = onMonthChange,
+                        onOpenPicker = onOpenPeriodPicker
+                    ) {
+                        CircleIconButton(BotIcons.Plus, "Add entry", onClick = onAdd)
+                    }
                 }
             }
             item(key = "figure") {
-                Column {
+                Column(itemMotion()) {
                     Row(
                         modifier = Modifier.padding(top = 15.dp, bottom = 8.dp).heightIn(min = 24.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Text(
-                            when (query.kind) {
+                        AnimatedContent(
+                            targetState = when (query.kind) {
                                 ActivityKind.Expense -> "Total spending"
                                 ActivityKind.Income -> "Total income"
                                 ActivityKind.Transfer -> "Money moved"
                                 ActivityKind.All -> "Net cash flow"
                             },
-                            style = body(14f, FontWeight.Medium, lineHeight = 1.4f),
-                            color = Bot.PageMuted
-                        )
+                            transitionSpec = {
+                                fadeIn(BotMotion.smooth(0.28f))
+                                    .togetherWith(fadeOut(BotMotion.smooth(0.18f)))
+                                    .using(SizeTransform(clip = false) { _, _ -> BotMotion.Resize })
+                            },
+                            label = "activityKicker"
+                        ) { kicker ->
+                            Text(kicker, style = body(14f, FontWeight.Medium, lineHeight = 1.4f), color = Bot.PageMuted)
+                        }
                         if (query.kind == ActivityKind.All) {
                             Box(
                                 modifier = Modifier
@@ -143,7 +159,7 @@ fun ActivityScreen(
                             }
                         }
                     }
-                    AnimatedVisibility(visible = aboutOpen && query.kind == ActivityKind.All) {
+                    Reveal(visible = aboutOpen && query.kind == ActivityKind.All) {
                         Text(
                             "Net cash flow is income minus expenses. Transfers between your accounts are excluded.",
                             style = body(13f, lineHeight = 1.6f),
@@ -161,13 +177,14 @@ fun ActivityScreen(
                         cents = figure,
                         style = moneyStyle(figureSize, letterSpacingPx = -2f),
                         color = Color.White,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        animate = true
                     )
                 }
             }
             item(key = "tools") {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                    modifier = itemMotion().fillMaxWidth().padding(top = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -187,13 +204,13 @@ fun ActivityScreen(
                     onSelect = { onQueryChange(query.copy(kind = it)) },
                     label = { it.label },
                     fontSize = 13f,
-                    modifier = Modifier.padding(top = 15.dp)
+                    modifier = itemMotion().padding(top = 15.dp)
                 )
             }
             if (filterCount > 0) {
                 item(key = "chips") {
                     FlowRow(
-                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                        modifier = itemMotion().fillMaxWidth().padding(top = 12.dp).animateContentSize(BotMotion.Resize),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -243,13 +260,14 @@ fun ActivityScreen(
                         month = month,
                         income = query.kind == ActivityKind.Income,
                         filtered = filterCount > 0 || query.search.isNotBlank(),
-                        modifier = Modifier.padding(top = 14.dp)
+                        modifier = itemMotion().padding(top = 14.dp)
                     )
                 }
             }
             if (shown.isEmpty()) {
                 item(key = "empty") {
                     EmptyState(
+                        modifier = itemMotion(),
                         title = if (query.search.isNotBlank()) "No entries matching “${query.search.trim()}”" else "No entries in this period",
                         body = if (narrowed) "Clear filters to show all entries for the selected month." else "Add an entry or choose another month.",
                         action = if (narrowed) "Clear filters" else "Add entry",
@@ -260,7 +278,7 @@ fun ActivityScreen(
                 days.forEach { (date, dayItems) ->
                     item(key = "day-$date") {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp),
+                            modifier = itemMotion().fillMaxWidth().padding(top = 16.dp, bottom = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
@@ -280,10 +298,11 @@ fun ActivityScreen(
                     }
                     item(key = "list-$date") {
                         Column(
-                            Modifier
+                            itemMotion()
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(25.dp))
                                 .background(Color.White)
+                                .animateContentSize(BotMotion.Resize)
                         ) {
                             dayItems.forEachIndexed { index, item ->
                                 val text = rowText(item, categoriesById, names)
@@ -303,7 +322,7 @@ fun ActivityScreen(
                 item(key = "count") {
                     Note(
                         "${shown.size} ${if (shown.size == 1) "entry" else "entries"}",
-                        modifier = Modifier.padding(top = 25.dp)
+                        modifier = itemMotion().padding(top = 25.dp)
                     )
                 }
             }
@@ -346,7 +365,11 @@ private fun SearchField(
                     .semantics { contentDescription = "Search entries" }
             )
         }
-        if (value.isNotEmpty()) {
+        AnimatedVisibility(
+            visible = value.isNotEmpty(),
+            enter = fadeIn(BotMotion.smooth(0.2f)) + scaleIn(BotMotion.bouncy(0.32f), initialScale = 0.5f),
+            exit = fadeOut(BotMotion.smooth(0.16f)) + scaleOut(BotMotion.smooth(0.2f), targetScale = 0.5f)
+        ) {
             Box(
                 Modifier
                     .size(36.dp)
@@ -363,24 +386,30 @@ private fun SearchField(
 @Composable
 private fun FilterButton(count: Int, onClick: () -> Unit) {
     val active = count > 0
+    val shownCount = rememberRetained(count.takeIf { it > 0 }) ?: 0
     Box(Modifier.size(48.dp)) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .clip(CircleShape)
-                .background(if (active) Color.White else Color(0x12FFFFFF))
-                .border(1.dp, if (active) Color.White else Color(0x25FFFFFF), CircleShape)
+                .background(animatedColor(if (active) Color.White else Color(0x12FFFFFF), "filterFill"))
+                .border(1.dp, animatedColor(if (active) Color.White else Color(0x25FFFFFF), "filterEdge"), CircleShape)
                 .botPress(onClick = onClick)
                 .semantics { contentDescription = if (active) "Filters, $count active" else "Filters" },
             contentAlignment = Alignment.Center
         ) {
-            BotIcon(BotIcons.Filter, size = 20.dp, tint = if (active) Bot.Navy else Color.White)
+            BotIcon(BotIcons.Filter, size = 20.dp, tint = animatedColor(if (active) Bot.Navy else Color.White, "filterInk"))
         }
-        if (active) {
+        AnimatedVisibility(
+            visible = active,
+            enter = fadeIn(BotMotion.smooth(0.2f)) + scaleIn(BotMotion.bouncy(0.34f), initialScale = 0.3f),
+            exit = fadeOut(BotMotion.smooth(0.16f)) + scaleOut(BotMotion.smooth(0.22f), targetScale = 0.3f),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .offset(x = 6.dp, y = (-6).dp)
+        ) {
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .offset(x = 6.dp, y = (-6).dp)
                     .size(24.dp)
                     .clip(CircleShape)
                     .background(Color(0xFF0B1428))
@@ -389,7 +418,7 @@ private fun FilterButton(count: Int, onClick: () -> Unit) {
                     .background(Bot.Orchid),
                 contentAlignment = Alignment.Center
             ) {
-                Text(count.toString(), style = body(11f, FontWeight.Bold), color = Bot.Navy)
+                Text(shownCount.toString(), style = body(11f, FontWeight.Bold), color = Bot.Navy)
             }
         }
     }
@@ -451,7 +480,17 @@ fun MonthlyComparisonPanel(
             if (percent != null && percent != 0) {
                 BotIcon(if (percent > 0) BotIcons.Up else BotIcons.Down, size = 14.dp, tint = toneColor)
             }
-            Text(change, style = body(16f, FontWeight.SemiBold, lineHeight = 1.35f), color = toneColor)
+            AnimatedContent(
+                targetState = change,
+                transitionSpec = {
+                    fadeIn(BotMotion.smooth(0.28f))
+                        .togetherWith(fadeOut(BotMotion.smooth(0.18f)))
+                        .using(SizeTransform(clip = false) { _, _ -> BotMotion.Resize })
+                },
+                label = "trendChange"
+            ) { line ->
+                Text(line, style = body(16f, FontWeight.SemiBold, lineHeight = 1.35f), color = animatedColor(toneColor, "trendTone"))
+            }
         }
         Text(
             "${monthLabel(comparison.previousMonth)} · ${formatRm(comparison.previous)}",
@@ -484,8 +523,7 @@ fun MonthlyComparisonPanel(
                                 Modifier
                                     .widthIn(max = 28.dp)
                                     .fillMaxWidth()
-                                    .fillMaxHeight(fraction)
-                                    .heightIn(min = 3.dp)
+                                    .growingBar(fraction, index, minHeight = 3.dp)
                                     .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp, bottomStart = 2.dp, bottomEnd = 2.dp))
                                     .background(
                                         if (value == 0L) Color(0xFFDFE3EB)
@@ -611,15 +649,16 @@ fun FilterSheet(
                 FilterOption(monthLabel(month), !useRange) { useRange = false }
                 FilterOption("Custom range", useRange) { useRange = true }
             }
-            if (useRange) {
+            Reveal(visible = useRange) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 16.dp)) {
                     DateField("From", from, Modifier.weight(1f)) { picking = "from" }
                     DateField("To", to, Modifier.weight(1f)) { picking = "to" }
                 }
             }
-            if (invalid) {
-                ErrorBox("Choose an end date on or after the start date.", Modifier.padding(top = 16.dp))
-            }
+            AnimatedError(
+                if (invalid) "Choose an end date on or after the start date." else null,
+                Modifier.padding(top = 16.dp)
+            )
         }
         CalendarPicker(
             visible = visible && picking != null,
@@ -656,7 +695,7 @@ private fun FilterOption(label: String, selected: Boolean, onClick: () -> Unit) 
         modifier = Modifier
             .heightIn(min = 44.dp)
             .clip(RoundedCornerShape(99.dp))
-            .background(if (selected) Bot.ActionSolid else Color(0xFFF0F2F6))
+            .background(animatedColor(if (selected) Bot.ActionSolid else Color(0xFFF0F2F6), "optionFill"))
             .botPress(onClick = onClick)
             .semantics { this.selected = selected }
             .padding(horizontal = 16.dp, vertical = 10.dp),
@@ -665,7 +704,7 @@ private fun FilterOption(label: String, selected: Boolean, onClick: () -> Unit) 
         Text(
             label,
             style = body(14f, FontWeight.Medium, lineHeight = 1.3f),
-            color = if (selected) Color.White else Bot.SecondaryInk,
+            color = animatedColor(if (selected) Color.White else Bot.SecondaryInk, "optionInk"),
             textAlign = TextAlign.Center
         )
     }
