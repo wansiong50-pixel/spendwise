@@ -1,5 +1,7 @@
 # SpendWise Android — Handoff
 
+> **Outdated as of 1.8 (September 2026).** The UI described here (Plum & Coral palette, light/dark toggle, `SpendWiseV2*.kt` screens) was replaced by the Botanical redesign in `app/src/main/java/com/spendwise/app/ui/botanical/`. The data, backup and recurring-rule notes may still help; treat UI details as history.
+
 > Pick this up cold. Everything you need is in here.
 
 ## What it is

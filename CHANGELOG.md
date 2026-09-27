@@ -2,6 +2,52 @@
 
 All notable changes to SpendWise are documented here.
 
+## [1.8] - 2026-09-27
+
+### Changed
+- **A new look: the Botanical redesign.** Every screen has been redrawn.
+  Home opens on a painted flower with your total balance, then this month's
+  income, spending and budgets, your top spending categories, the spending
+  heatmap and recent activity. Activity, Insights, Accounts, Categories,
+  Recurring and Settings sit on midnight navy with white cards. Categories
+  and accounts have illustrated icons, and each account card has a landscape.
+- A new add/edit screen. Amounts fill in from the right (typing 1, 2, 3 reads
+  RM 0.01, 0.12, 1.23). Dates come from an illustrated calendar, recent
+  merchants are one tap away, and closing with unsaved changes asks before
+  discarding them. Transfers can now be edited and shared like any other
+  entry.
+- **Fluid motion.** Everything moves on springs that keep their speed when
+  interrupted, so nothing jumps or restarts. Sheets and the calendar rise from
+  the bottom and can be dragged down or flicked away. The add/edit card opens
+  over the app, which recedes behind it, and pulls down to close. Pages slide
+  in over the previous one, and on Android 14+ the back gesture drags them
+  away under your finger. Lists bounce at their edges, and Home's painting
+  stretches when pulled down. Headline amounts roll their digits, typed
+  amounts slide along as you type, and segments, switches, charts and
+  progress bars glide. Android's "Remove animations" setting still turns
+  motion off.
+- Insights has Month and Year views, income and expense cards compared with
+  the previous period, and a 12-month cash-flow chart.
+- Settings is now a full page, and the app has one appearance: the light/dark
+  toggle is gone.
+
+### Added
+- Activity filters: account, category and a custom date range (it can span
+  several months), shown as removable chips. The Expense and Income tabs
+  show a six-month trend.
+- Restoring a backup now shows what the file holds (entries, transfers,
+  accounts, categories, recurring rules) before anything is replaced.
+- CSV export for a month or a whole year from Insights, with transfers listed
+  separately.
+- Built-in categories can be renamed, given a new icon, and given a monthly
+  budget. They still can't be deleted.
+- Accounts can have a negative balance, such as an amount already owed on a
+  credit card.
+
+### Removed
+- The month picker's quick ranges (year to date, all time). Use Insights'
+  Year view or an Activity custom range instead.
+
 ## [1.7] - 2026-07-22
 
 ### Changed

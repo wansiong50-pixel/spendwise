@@ -217,6 +217,23 @@ interface CategoryDao {
         isIncome: Boolean
     ): Int
 
+    // Built-ins can be renamed and re-illustrated, but their income/expense
+    // kind is fixed — it's what routes every existing entry into the right
+    // total, and built-ins can't be deleted to start over.
+    @Query(
+        """
+        UPDATE categories
+        SET name = :name, color = :color, iconName = :iconName
+        WHERE id = :id AND isCustom = 0
+        """
+    )
+    suspend fun updateBuiltInCategory(
+        id: Long,
+        name: String,
+        color: Long,
+        iconName: String
+    ): Int
+
     @Query("DELETE FROM categories WHERE id = :id AND isCustom = 1")
     suspend fun deleteCustomCategory(id: Long): Int
 

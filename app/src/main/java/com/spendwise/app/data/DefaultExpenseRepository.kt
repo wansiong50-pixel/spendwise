@@ -258,6 +258,20 @@ class DefaultExpenseRepository(
         ) > 0
     }
 
+    override suspend fun updateBuiltInCategory(
+        id: Long,
+        name: String,
+        color: Long,
+        iconName: String
+    ): Boolean {
+        return categoryDao.updateBuiltInCategory(
+            id = id,
+            name = name.trim(),
+            color = color,
+            iconName = iconName
+        ) > 0
+    }
+
     override suspend fun deleteCustomCategory(id: Long): Boolean {
         if (categoryDao.expenseCountForCategory(id) > 0) return false
         // A rule without its category is meaningless, so rules die with the

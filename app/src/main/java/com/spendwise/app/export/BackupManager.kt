@@ -32,6 +32,20 @@ sealed interface BackupResult {
     data class Failure(val reason: String) : BackupResult
 }
 
+/** What a backup file holds, read before the user agrees to replace their data. */
+sealed interface BackupPreview {
+    data class Ready(
+        val entries: Int,
+        val transfers: Int,
+        val accounts: Int,
+        val categories: Int,
+        val recurringRules: Int,
+        val exportedAtMillis: Long
+    ) : BackupPreview
+
+    data class Invalid(val reason: String) : BackupPreview
+}
+
 // Room schema version recorded in the backup so future migrations can branch
 // on it if needed. Kept as a const here (rather than reading from the
 // database) because it's part of the static contract for backups produced by
@@ -91,22 +105,59 @@ class BackupManager(
         }
     }
 
+    /**
+     * Reads [uri] without touching the database so the restore review can
+     * show what the file holds before anything is replaced.
+     */
+    suspend fun previewBackup(uri: Uri): BackupPreview = withContext(Dispatchers.IO) {
+        try {
+            when (val read = readEnvelope(uri)) {
+                is EnvelopeRead.Failed -> BackupPreview.Invalid(read.reason)
+                is EnvelopeRead.Ok -> with(read.envelope) {
+                    BackupPreview.Ready(
+                        entries = expenses.size,
+                        transfers = transfers.size,
+                        accounts = accounts.size,
+                        categories = categories.size,
+                        recurringRules = recurringRules.size,
+                        exportedAtMillis = exportedAtMillis
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            BackupPreview.Invalid("Couldn't read this backup: ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
+    private sealed interface EnvelopeRead {
+        data class Ok(val envelope: BackupEnvelope) : EnvelopeRead
+        data class Failed(val reason: String) : EnvelopeRead
+    }
+
+    private fun readEnvelope(uri: Uri): EnvelopeRead {
+        val text = context.contentResolver.openInputStream(uri)?.use { stream ->
+            stream.readBytes().toString(Charsets.UTF_8)
+        } ?: return EnvelopeRead.Failed("Couldn't open the chosen file.")
+
+        val envelope = try {
+            json.decodeFromString(BackupEnvelope.serializer(), text)
+        } catch (_: Exception) {
+            return EnvelopeRead.Failed("This file isn't a valid SpendWise backup.")
+        }
+
+        if (envelope.schemaVersion > CURRENT_BACKUP_SCHEMA_VERSION) {
+            return EnvelopeRead.Failed(
+                "This backup was made with a newer version of the app — please update first."
+            )
+        }
+        return EnvelopeRead.Ok(envelope)
+    }
+
     suspend fun importBackup(uri: Uri): BackupResult = withContext(Dispatchers.IO) {
         try {
-            val text = context.contentResolver.openInputStream(uri)?.use { stream ->
-                stream.readBytes().toString(Charsets.UTF_8)
-            } ?: return@withContext BackupResult.Failure("Couldn't open the chosen file.")
-
-            val envelope = try {
-                json.decodeFromString(BackupEnvelope.serializer(), text)
-            } catch (_: Exception) {
-                return@withContext BackupResult.Failure("This file isn't a valid SpendWise backup.")
-            }
-
-            if (envelope.schemaVersion > CURRENT_BACKUP_SCHEMA_VERSION) {
-                return@withContext BackupResult.Failure(
-                    "This backup was made with a newer version of the app — please update first."
-                )
+            val envelope = when (val read = readEnvelope(uri)) {
+                is EnvelopeRead.Failed -> return@withContext BackupResult.Failure(read.reason)
+                is EnvelopeRead.Ok -> read.envelope
             }
 
             // Replace-all in a single transaction. Wipe children before
