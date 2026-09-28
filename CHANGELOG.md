@@ -2,6 +2,19 @@
 
 All notable changes to SpendWise are documented here.
 
+## [1.8.1] - 2026-09-28
+
+### Fixed
+- The keyboard no longer leaves a gap. Typing in the add/edit card or a
+  sheet used to lift it far above the keyboard, with the app showing
+  through in between; it now sits right on top of the keyboard.
+- The field you're typing in stays visible above the Save button instead
+  of sliding behind it.
+- Opening a sheet, the calendar or the add/edit card closes the keyboard,
+  so the calendar's month arrows are no longer cut off and typing can't
+  land in a hidden field (such as Activity's search behind the add card).
+- Amounts no longer show a stray blue cursor handle after you tap them.
+
 ## [1.8] - 2026-09-27
 
 ### Changed
