@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -46,8 +47,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
@@ -151,10 +155,22 @@ fun HomeScreen(
                 onOpenItem = onOpenItem
             )
         }
+        HeroShade(
+            heroHeight = heroHeight,
+            top = { bounce.offsetY - scroll.value }
+        )
     }
 }
 
 private val HeroShape = RoundedCornerShape(bottomStart = 46.dp, bottomEnd = 46.dp)
+
+/**
+ * The shade behind the status bar: the wash's navy at the 95% other pages' status
+ * bars use, fading out [ShadeFade] below the bar, fully in after [ShadeRamp] of scrolling.
+ */
+private val ShadeColor = Color(0xF2030916)
+private val ShadeFade = 28.dp
+private val ShadeRamp = 16.dp
 
 /**
  * The painted flower behind the hero. It lives outside the scrolling column
@@ -165,26 +181,7 @@ private val HeroShape = RoundedCornerShape(bottomStart = 46.dp, bottomEnd = 46.d
  */
 @Composable
 private fun HeroPainting(heroHeight: Int, top: () -> Float) {
-    val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val fallback = with(LocalDensity.current) { (320.dp + statusTop).roundToPx() }
-    // Only a pull past the top changes the frame's size; ordinary scrolling just moves it.
-    val stretch = remember { derivedStateOf { top().coerceAtLeast(0f) } }
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .layout { measurable, constraints ->
-                // Pulled down: the frame grows to meet the hero again, its top pinned to
-                // the screen, and the painting (aspect fill) zooms to fill it.
-                val height = (if (heroHeight > 0) heroHeight else fallback) + stretch.value.roundToInt()
-                val placeable = measurable.measure(Constraints.fixed(constraints.maxWidth, height))
-                layout(placeable.width, placeable.height) { placeable.place(0, 0) }
-            }
-            .graphicsLayer {
-                translationY = top().coerceAtMost(0f)
-                shape = HeroShape
-                clip = true
-            }
-    ) {
+    HeroFrame(heroHeight, top) {
         Image(
             painter = painterResource(R.drawable.botanical_hero),
             contentDescription = null,
@@ -204,6 +201,64 @@ private fun HeroPainting(heroHeight: Int, top: () -> Float) {
                 )
         )
     }
+}
+
+/**
+ * Keeps the hero's words out from under the status bar. As Home scrolls, a
+ * shade comes in over the painting behind the status bar and a little below
+ * it, so the balance fades away under it instead of sliding across the
+ * clock. It's drawn over the scrolling hero but within the painting's frame,
+ * so it never darkens the paper below, and Home at rest is left untouched.
+ */
+@Composable
+private fun HeroShade(heroHeight: Int, top: () -> Float) {
+    val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    HeroFrame(heroHeight, top) {
+        Box(
+            Modifier
+                .matchParentSize()
+                .drawBehind {
+                    // The frame has moved up with the hero, so the screen's top is this far down it.
+                    val scrolled = -top()
+                    if (scrolled <= 0f) return@drawBehind
+                    val solid = statusTop.toPx()
+                    val end = solid + ShadeFade.toPx()
+                    translate(top = scrolled) {
+                        drawRect(
+                            Brush.verticalGradient(0f to ShadeColor, solid / end to ShadeColor, 1f to Color.Transparent, endY = end),
+                            size = Size(size.width, end),
+                            alpha = (scrolled / ShadeRamp.toPx()).coerceAtMost(1f)
+                        )
+                    }
+                }
+        )
+    }
+}
+
+/** A layer that keeps to the hero's frame as [HeroPainting] describes, clipped to its rounded foot. */
+@Composable
+private fun HeroFrame(heroHeight: Int, top: () -> Float, content: @Composable BoxScope.() -> Unit) {
+    val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val fallback = with(LocalDensity.current) { (320.dp + statusTop).roundToPx() }
+    // Only a pull past the top changes the frame's size; ordinary scrolling just moves it.
+    val stretch = remember { derivedStateOf { top().coerceAtLeast(0f) } }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .layout { measurable, constraints ->
+                // Pulled down: the frame grows to meet the hero again, its top pinned to
+                // the screen, and the painting (aspect fill) zooms to fill it.
+                val height = (if (heroHeight > 0) heroHeight else fallback) + stretch.value.roundToInt()
+                val placeable = measurable.measure(Constraints.fixed(constraints.maxWidth, height))
+                layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+            }
+            .graphicsLayer {
+                translationY = top().coerceAtMost(0f)
+                shape = HeroShape
+                clip = true
+            },
+        content = content
+    )
 }
 
 @Composable

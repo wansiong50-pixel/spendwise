@@ -78,6 +78,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -313,7 +314,22 @@ fun EntryScreen(
             .imePadding()
             .semantics { paneTitle = if (isEdit) "Edit entry" else "New entry" }
     ) {
-        Column(Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                // Pulled up past expanded by its handle, or springing back past its
+                // place, the card rises off the foot of the screen; the colour at its
+                // bottom edge carries on down to the foot rather than opening onto
+                // the app behind. It starts a pixel up, under the card, so no seam shows.
+                .drawBehind {
+                    val cardBottom = size.height + gap.value
+                    val foot = size.height + (presentation.value - 1f).coerceAtLeast(0f) * drag.height
+                    if (foot > cardBottom) {
+                        val edge = formColorAt(scroll.value + scroll.viewportSize, FormGradientEnd.toPx())
+                        drawRect(edge, Offset(0f, cardBottom - 1f), Size(size.width, foot - cardBottom + 1f))
+                    }
+                }
+        ) {
             Spacer(Modifier.height(statusTop))
             BoxWithConstraints(
                 Modifier
@@ -330,7 +346,7 @@ fun EntryScreen(
                     // Pulled past its end, the form rubber-bands up; the card fills in
                     // below it with the colour the form ends on rather than opening onto
                     // the app behind.
-                    .drawBehind { drawRect(formEndColor(scroll, FormGradientEnd.toPx())) }
+                    .drawBehind { drawRect(formColorAt(scroll.maxValue + scroll.viewportSize, FormGradientEnd.toPx())) }
                     .nestedScroll(drag.connection)
             ) {
                 val gradientEnd = with(density) { FormGradientEnd.toPx() }
@@ -611,9 +627,9 @@ private val RestingRadius = 36.dp
 private val FormTop = Color(0xFF031EA5)
 private val FormGradientEnd = 960.dp
 
-/** The form's colour at its bottom edge: its gradient where the content ends, blended in sRGB like the gradient. */
-private fun formEndColor(scroll: ScrollState, gradientEnd: Float): Color {
-    val t = ((scroll.maxValue + scroll.viewportSize) / gradientEnd).coerceIn(0f, 1f)
+/** The form's colour [y] px down its content: its gradient there, blended in sRGB like the gradient. */
+private fun formColorAt(y: Int, gradientEnd: Float): Color {
+    val t = (y / gradientEnd).coerceIn(0f, 1f)
     return Color(
         red = FormTop.red + (1f - FormTop.red) * t,
         green = FormTop.green + (1f - FormTop.green) * t,

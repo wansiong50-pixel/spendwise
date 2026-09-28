@@ -60,8 +60,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -195,13 +197,15 @@ private class CardDrag(
  * and follows a predictive back gesture down a little before dismissing.
  * Back, the scrim and a fast or far drag all call [onDismiss]; the card
  * stays composed until it has left the screen. [card] receives the modifier
- * that moves and drags it.
+ * that moves and drags it. [fill] is the card's colour at its bottom edge,
+ * shown below the card while it's raised past its resting place.
  */
 @Composable
 internal fun BottomCardHost(
     visible: Boolean,
     onDismiss: () -> Unit,
     scrim: Color,
+    fill: Color,
     card: @Composable BoxWithConstraintsScope.(Modifier) -> Unit
 ) {
     val shown = remember { Animatable(0f) }
@@ -255,6 +259,15 @@ internal fun BottomCardHost(
         val cardModifier = Modifier
             .onSizeChanged { drag.height = it.height.toFloat() }
             .graphicsLayer { translationY = (1f - shown.value) * size.height }
+            // Pulled up, or springing back past its place, the card rises off the
+            // foot of the screen; [fill] carries it on down to the foot rather than
+            // opening onto the app behind. It's drawn over the card's shadow, and a
+            // pixel into the card so no seam shows.
+            .drawWithContent {
+                drawContent()
+                val lift = (shown.value - 1f) * size.height
+                if (lift > 0f) drawRect(fill, Offset(0f, size.height - 1f), Size(size.width, lift + 1f))
+            }
             .draggable(
                 state = rememberDraggableState { delta -> drag.by(delta) },
                 orientation = Orientation.Vertical,
@@ -286,7 +299,7 @@ fun BotSheet(
     footer: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    BottomCardHost(visible = visible, onDismiss = onDismiss, scrim = Bot.Scrim) { cardModifier ->
+    BottomCardHost(visible = visible, onDismiss = onDismiss, scrim = Bot.Scrim, fill = Color.White) { cardModifier ->
         val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         val bottomPad = maxOf(28.dp, navBottom)
         Column(
