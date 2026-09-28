@@ -73,6 +73,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -326,16 +327,20 @@ fun EntryScreen(
                         shape = RoundedCornerShape(topStart = radius, topEnd = radius)
                         clip = true
                     }
+                    // Pulled past its end, the form rubber-bands up; the card fills in
+                    // below it with the colour the form ends on rather than opening onto
+                    // the app behind.
+                    .drawBehind { drawRect(formEndColor(scroll, FormGradientEnd.toPx())) }
                     .nestedScroll(drag.connection)
             ) {
-                val gradientEnd = with(density) { 960.dp.toPx() }
+                val gradientEnd = with(density) { FormGradientEnd.toPx() }
                 FormColumn(
                     scroll = scroll,
                     // Save's strip, plus the part of a resting card that hangs below the bottom edge.
                     covered = { saveHeight + gap.value },
                     modifier = Modifier
                         .heightIn(min = maxHeight)
-                        .background(Brush.verticalGradient(listOf(Color(0xFF031EA5), Color.White), startY = 0f, endY = gradientEnd))
+                        .background(Brush.verticalGradient(listOf(FormTop, Color.White), startY = 0f, endY = gradientEnd))
                         .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp + navBottom + RestingGap)
                 ) {
                     PullHandle(
@@ -601,6 +606,20 @@ fun EntryScreen(
 /** How far the resting card sits below the status bar, and its corner radius there. */
 private val RestingGap = 28.dp
 private val RestingRadius = 36.dp
+
+/** The form's gradient runs from navy at its top to white [FormGradientEnd] down. */
+private val FormTop = Color(0xFF031EA5)
+private val FormGradientEnd = 960.dp
+
+/** The form's colour at its bottom edge: its gradient where the content ends, blended in sRGB like the gradient. */
+private fun formEndColor(scroll: ScrollState, gradientEnd: Float): Color {
+    val t = ((scroll.maxValue + scroll.viewportSize) / gradientEnd).coerceIn(0f, 1f)
+    return Color(
+        red = FormTop.red + (1f - FormTop.red) * t,
+        green = FormTop.green + (1f - FormTop.green) * t,
+        blue = FormTop.blue + (1f - FormTop.blue) * t
+    )
+}
 
 /**
  * The form's scrolling column. Save floats over its foot, so while a field
