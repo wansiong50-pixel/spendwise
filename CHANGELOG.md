@@ -2,6 +2,17 @@
 
 All notable changes to SpendWise are documented here.
 
+## [1.8.3] - 2026-09-28
+
+### Fixed
+- Pulling a sheet up by its handle no longer opens a see-through gap at the
+  bottom of the screen. Transaction details and every other sheet, the
+  add/edit card's handle and the calendar now continue below in their own
+  colour and spring back when you let go.
+- Scrolling Home no longer slides your balance across the clock and status
+  icons. A navy shade comes in behind the status bar as you scroll, so the
+  balance fades away under it.
+
 ## [1.8.2] - 2026-09-28
 
 ### Fixed
