@@ -15,9 +15,12 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
@@ -26,6 +29,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -54,8 +58,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -69,6 +75,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -79,6 +86,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -101,7 +109,9 @@ import com.spendwise.app.domain.MoneyFormatter
 import com.spendwise.app.domain.Transfer
 import java.time.LocalDate
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -184,8 +194,13 @@ fun EntryScreen(
     val amountFocus = remember { FocusRequester() }
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
 
-    LaunchedEffect(Unit) { onClearError() }
+    LaunchedEffect(Unit) {
+        onClearError()
+        // Otherwise a field on the page behind (Activity's search) keeps the keyboard, and whatever is typed, under the card.
+        focusManager.clearFocus()
+    }
     // A category created from here is selected once it lands in the list.
     LaunchedEffect(categories, pendingCategoryName) {
         val name = pendingCategoryName ?: return@LaunchedEffect
@@ -287,6 +302,7 @@ fun EntryScreen(
         }
     }
     val scroll = rememberScrollState()
+    var saveHeight by remember { mutableIntStateOf(0) }
 
     Box(
         Modifier
@@ -313,10 +329,11 @@ fun EntryScreen(
                     .nestedScroll(drag.connection)
             ) {
                 val gradientEnd = with(density) { 960.dp.toPx() }
-                Column(
+                FormColumn(
+                    scroll = scroll,
+                    // Save's strip, plus the part of a resting card that hangs below the bottom edge.
+                    covered = { saveHeight + gap.value },
                     modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(scroll)
                         .heightIn(min = maxHeight)
                         .background(Brush.verticalGradient(listOf(Color(0xFF031EA5), Color.White), startY = 0f, endY = gradientEnd))
                         .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp + navBottom + RestingGap)
@@ -521,6 +538,7 @@ fun EntryScreen(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
+                .onSizeChanged { saveHeight = it.height }
                 .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = maxOf(16.dp, navBottom))
         ) {
             BotButton(
@@ -583,6 +601,56 @@ fun EntryScreen(
 /** How far the resting card sits below the status bar, and its corner radius there. */
 private val RestingGap = 28.dp
 private val RestingRadius = 36.dp
+
+/**
+ * The form's scrolling column. Save floats over its foot, so while a field
+ * has focus the form scrolls it — as it's tapped, and as the keyboard rises
+ * under it — clear of Save rather than just inside the viewport: the bottom
+ * [covered] px count as hidden. The rows and fields inside keep the usual
+ * rule for their own scrolling.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun FormColumn(
+    scroll: ScrollState,
+    covered: () -> Float,
+    modifier: Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val inner = LocalBringIntoViewSpec.current
+    var typing by remember { mutableStateOf(false) }
+    val latestCovered by rememberUpdatedState(covered)
+    val spec = remember { ClearOfFoot { if (typing) latestCovered() else 0f } }
+    CompositionLocalProvider(LocalBringIntoViewSpec provides spec) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .onFocusChanged { typing = it.hasFocus }
+                .verticalScroll(scroll)
+                .then(modifier)
+        ) {
+            CompositionLocalProvider(LocalBringIntoViewSpec provides inner) { content() }
+        }
+    }
+}
+
+/**
+ * Compose's default scroll-into-view rule with the bottom [covered] px of
+ * the viewport treated as hidden. Something taller than the room left
+ * shows its top instead.
+ */
+private class ClearOfFoot(private val covered: () -> Float) : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        val room = max(containerSize - covered(), min(size, containerSize))
+        val end = offset + size
+        return when {
+            offset >= 0f && end <= room -> 0f
+            offset < 0f && end > room -> 0f
+            abs(offset) < abs(end - room) -> offset
+            else -> end - room
+        }
+    }
+}
 
 /**
  * Drags the entry card. Between expanded (0) and resting ([restingGap]) the

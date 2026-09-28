@@ -18,10 +18,15 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.ExpenseTracker"
         tools:targetApi="33">
+        <!-- adjustResize: the keyboard only reports its height and the UI
+             makes room itself (imePadding on the entry card and sheets).
+             Left unset, Android pans the whole window up as well, so the
+             card rose twice as far as the keyboard and left a gap. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.ExpenseTracker.Starting">
+            android:theme="@style/Theme.ExpenseTracker.Starting"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 

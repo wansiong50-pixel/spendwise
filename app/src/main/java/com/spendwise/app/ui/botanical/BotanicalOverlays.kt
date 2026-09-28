@@ -69,6 +69,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
@@ -205,8 +206,13 @@ internal fun BottomCardHost(
 ) {
     val shown = remember { Animatable(0f) }
     var present by remember { mutableStateOf(visible) }
+    val focusManager = LocalFocusManager.current
     LaunchedEffect(visible) {
         if (visible) {
+            // The card takes over from any field being typed in beneath it: the
+            // keyboard goes, so it can't crowd the card (a calendar's month
+            // arrows) or keep typing into a field the card now hides.
+            focusManager.clearFocus()
             present = true
             shown.animateTo(1f, BotMotion.SheetOpen)
         } else if (present) {
