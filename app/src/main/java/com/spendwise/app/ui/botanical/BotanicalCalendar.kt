@@ -81,6 +81,7 @@ enum class CalendarMode { Date, Month }
 private val Glass = Color(0x94122A69)
 private val GlassEdge = Color(0x47FFFFFF)
 private val CardShape = RoundedCornerShape(topStart = 36.dp, topEnd = 36.dp)
+private val CardColor = Color(0xFF102B85)
 
 /**
  * The first date of each of [month]'s calendar cells, Sunday first; null for
@@ -126,7 +127,7 @@ fun CalendarPicker(
     onConfirm: (LocalDate) -> Unit,
     maxDate: LocalDate? = todayKl()
 ) {
-    BottomCardHost(visible = visible, onDismiss = onCancel, scrim = Color(0x33000000)) { cardModifier ->
+    BottomCardHost(visible = visible, onDismiss = onCancel, scrim = Color(0x33000000), fill = CardColor) { cardModifier ->
         val bounded = if (maxDate != null && initial > maxDate) maxDate else initial
         var selected by remember(initial) { mutableStateOf(bounded) }
         var visibleMonth by remember(initial) { mutableStateOf(YearMonth.from(bounded)) }
@@ -147,7 +148,7 @@ fun CalendarPicker(
                 .heightIn(max = maxHeight * 0.94f)
                 .shadow(24.dp, CardShape, clip = false)
                 .clip(CardShape)
-                .background(Color(0xFF102B85))
+                .background(CardColor)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
