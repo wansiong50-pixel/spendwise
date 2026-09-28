@@ -2,6 +2,13 @@
 
 All notable changes to SpendWise are documented here.
 
+## [1.8.2] - 2026-09-28
+
+### Fixed
+- Pulling the add/edit form up past its end no longer opens a see-through
+  gap onto the screen behind the card. The card now continues below the
+  form in its own colour and springs back when you let go.
+
 ## [1.8.1] - 2026-09-28
 
 ### Fixed
