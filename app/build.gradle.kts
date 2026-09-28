@@ -24,8 +24,8 @@ android {
         applicationId = "com.spendwise.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
-        versionName = "1.8"
+        versionCode = 16
+        versionName = "1.8.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

@@ -47,11 +47,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
+import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
@@ -1395,6 +1398,8 @@ internal fun amountGlyphs(cents: Long): List<AmountGlyph> {
     return glyphs
 }
 
+private val HiddenSelection = TextSelectionColors(handleColor = Color.Transparent, backgroundColor = Color.Transparent)
+
 /**
  * Fixed-sen amount (`AmountInput`): digits fill from the right — typing 1, 2,
  * 3 reads 0.01, 0.12, 1.23 — and the decimal is never typed. Each new digit
@@ -1442,31 +1447,35 @@ fun AmountInput(
         val scale = animateFloatAsState(fit, BotMotion.smooth(0.34f), label = "amountFit")
 
         // The field takes taps and the keyboard; what it shows is drawn below.
-        BasicTextField(
-            value = field,
-            onValueChange = { next ->
-                val digits = next.text.filter { it.isDigit() }.trimStart('0').take(11)
-                val newCents = digits.toLongOrNull() ?: 0L
-                val shown = formatAmount(newCents)
-                field = TextFieldValue(shown, TextRange(shown.length))
-                if (newCents != cents) onChange(newCents)
-            },
-            singleLine = true,
-            textStyle = numberStyle.copy(color = Color.Transparent),
-            cursorBrush = SolidColor(Color.Transparent),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier
-                .matchParentSize()
-                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-                .onFocusChanged {
-                    focused = it.isFocused
-                    if (it.isFocused) field = field.copy(selection = TextRange(field.text.length))
-                }
-                .semantics {
-                    contentDescription = "$label, RM $display"
-                    if (error != null) error(error)
-                }
-        )
+        // Its cursor handle and selection stay invisible like its text — the
+        // teardrop would otherwise hang under digits the field never shows.
+        CompositionLocalProvider(LocalTextSelectionColors provides HiddenSelection) {
+            BasicTextField(
+                value = field,
+                onValueChange = { next ->
+                    val digits = next.text.filter { it.isDigit() }.trimStart('0').take(11)
+                    val newCents = digits.toLongOrNull() ?: 0L
+                    val shown = formatAmount(newCents)
+                    field = TextFieldValue(shown, TextRange(shown.length))
+                    if (newCents != cents) onChange(newCents)
+                },
+                singleLine = true,
+                textStyle = numberStyle.copy(color = Color.Transparent),
+                cursorBrush = SolidColor(Color.Transparent),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier
+                    .matchParentSize()
+                    .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+                    .onFocusChanged {
+                        focused = it.isFocused
+                        if (it.isFocused) field = field.copy(selection = TextRange(field.text.length))
+                    }
+                    .semantics {
+                        contentDescription = "$label, RM $display"
+                        if (error != null) error(error)
+                    }
+            )
+        }
         AmountGlyphRow(
             glyphs = glyphs,
             numberStyle = numberStyle,
